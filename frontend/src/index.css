@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth scrolling for chat window */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Prose-like styling for assistant markdown output */
+.assistant-prose h1,
+.assistant-prose h2,
+.assistant-prose h3 {
+  @apply font-semibold mt-3 mb-1;
+}
+.assistant-prose h1 { @apply text-base; }
+.assistant-prose h2 { @apply text-sm; }
+.assistant-prose h3 { @apply text-sm; }
+.assistant-prose p  { @apply text-sm leading-relaxed mb-2; }
+.assistant-prose ul { @apply list-disc list-inside text-sm mb-2 space-y-0.5; }
+.assistant-prose ol { @apply list-decimal list-inside text-sm mb-2 space-y-0.5; }
+.assistant-prose code { @apply bg-gray-100 text-mentis-800 px-1 py-0.5 rounded text-xs font-mono; }
+.assistant-prose pre  { @apply bg-gray-100 rounded-lg p-3 overflow-x-auto text-xs font-mono mb-2; }
+.assistant-prose pre code { @apply bg-transparent p-0; }
+.assistant-prose blockquote { @apply border-l-4 border-mentis-300 pl-3 italic text-gray-600 text-sm; }
+.assistant-prose a { @apply text-mentis-700 underline; }

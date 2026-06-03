@@ -1,0 +1,128 @@
+name: Deploy (prod)
+
+# main is the single deployable branch — every push to main ships to prod.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# OIDC federation to AWS (no long-lived access keys).
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROJECT: mentis
+  TF_ENV: prod
+
+jobs:
+  deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=mentis/prod/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+      # ECR repo must exist before we can push the image. Create just that
+      # resource first (idempotent); a placeholder image URI satisfies the
+      # required variable for this targeted apply.
+      - name: Ensure ECR repository
+        working-directory: infra
+        run: |
+          terraform apply -auto-approve -target=aws_ecr_repository.app \
+            -var="environment=${TF_ENV}" \
+            -var="lambda_image_uri=placeholder"
+
+      - name: Build & push image (arm64)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE_URI="${REGISTRY}/${PROJECT}-${TF_ENV}:${GITHUB_SHA}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
+          docker buildx build --platform linux/arm64 --provenance=false \
+            -t "${IMAGE_URI}" --push .
+
+      - name: Terraform apply
+        working-directory: infra
+        run: |
+          terraform apply -auto-approve \
+            -var="environment=${TF_ENV}" \
+            -var="lambda_image_uri=${IMAGE_URI}" \
+            -var="allowed_origin=${{ vars.SITE_ORIGIN || '*' }}" \
+            -var="harvest_enabled=${{ vars.HARVEST_ENABLED || 'false' }}"
+
+      - name: Capture Terraform outputs
+        id: tf
+        working-directory: infra
+        run: |
+          {
+            echo "api_url=$(terraform output -raw api_url)"
+            echo "site_bucket=$(terraform output -raw site_bucket)"
+            echo "cloudfront_url=$(terraform output -raw cloudfront_url)"
+            echo "distribution_id=$(terraform output -raw cloudfront_distribution_id)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ steps.tf.outputs.api_url }}
+          VITE_API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy frontend to S3 + invalidate CloudFront
+        run: |
+          aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.site_bucket }}" --delete
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.tf.outputs.distribution_id }}" \
+            --paths "/*"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to prod :rocket:"
+            echo ""
+            echo "- API: ${{ steps.tf.outputs.api_url }}"
+            echo "- Site: ${{ steps.tf.outputs.cloudfront_url }}"
+            echo "- Image: \`${IMAGE_URI}\`"
+            echo ""
+            echo "> If CORS is still \`*\`, set the **SITE_ORIGIN** repo variable to the site URL above and re-run."
+          } >> "$GITHUB_STEP_SUMMARY"
