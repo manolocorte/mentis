@@ -2,32 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Smooth scrolling for chat window */
-html {
-  scroll-behavior: smooth;
-}
+:root { color-scheme: light; }
+html.dark { color-scheme: dark; }
 
-/* Prose-like styling for assistant markdown output */
-.assistant-prose h1,
-.assistant-prose h2,
-.assistant-prose h3 {
-  @apply font-semibold mt-3 mb-1;
+html { scroll-behavior: smooth; background-color: #fafaf9; }
+html.dark { background-color: #0c0a09; }
+
+body { @apply font-sans text-stone-800 antialiased; }
+.dark body { @apply text-stone-100; }
+
+::selection { background: rgba(47, 106, 76, 0.18); }
+
+/* Thin, quiet scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgba(120, 113, 108, 0.4) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(120, 113, 108, 0.35); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(120, 113, 108, 0.55); }
+
+/* Assistant markdown — editorial: serif headings, sans body, mono code */
+.assistant-prose h1, .assistant-prose h2, .assistant-prose h3 {
+  @apply font-serif font-semibold text-stone-900 dark:text-stone-100 mt-4 mb-1.5;
 }
-.assistant-prose h1 { @apply text-base; }
-.assistant-prose h2 { @apply text-sm; }
+.assistant-prose h1 { @apply text-lg; }
+.assistant-prose h2 { @apply text-base; }
 .assistant-prose h3 { @apply text-sm; }
-.assistant-prose p  { @apply text-sm leading-relaxed mb-2; }
-.assistant-prose ul { @apply list-disc list-inside text-sm mb-2 space-y-0.5; }
-.assistant-prose ol { @apply list-decimal list-inside text-sm mb-2 space-y-0.5; }
-.assistant-prose code { @apply bg-gray-100 text-mentis-800 px-1 py-0.5 rounded text-xs font-mono; }
-.assistant-prose pre  { @apply bg-gray-100 rounded-lg p-3 overflow-x-auto text-xs font-mono mb-2; }
+.assistant-prose p { @apply text-[0.9rem] leading-relaxed mb-2.5 text-stone-700 dark:text-stone-300; }
+.assistant-prose ul { @apply list-disc pl-5 text-[0.9rem] mb-2.5 space-y-1 text-stone-700 dark:text-stone-300; }
+.assistant-prose ol { @apply list-decimal pl-5 text-[0.9rem] mb-2.5 space-y-1 text-stone-700 dark:text-stone-300; }
+.assistant-prose code { @apply font-mono text-[0.8rem] bg-stone-100 dark:bg-stone-800 text-mentis-700 dark:text-mentis-300 px-1 py-0.5 rounded; }
+.assistant-prose pre { @apply font-mono text-xs bg-stone-100 dark:bg-stone-900 rounded-lg p-3 overflow-x-auto mb-2.5; }
 .assistant-prose pre code { @apply bg-transparent p-0; }
-.assistant-prose blockquote { @apply border-l-4 border-mentis-300 pl-3 italic text-gray-600 text-sm; }
-.assistant-prose a { @apply text-mentis-700 underline; }
-
-/* Dark mode */
-html.dark { background-color: #111827; }
-.dark .assistant-prose code { @apply bg-gray-700 text-mentis-200; }
-.dark .assistant-prose pre { @apply bg-gray-900; }
-.dark .assistant-prose blockquote { @apply text-gray-300 border-mentis-600; }
-.dark .assistant-prose a { @apply text-mentis-300; }
+.assistant-prose blockquote { @apply border-l-2 border-mentis-400 pl-3 italic text-stone-600 dark:text-stone-400 text-sm; }
+.assistant-prose a { @apply text-mentis-700 dark:text-mentis-300 underline underline-offset-2; }

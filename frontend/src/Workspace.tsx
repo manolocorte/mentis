@@ -1,4 +1,18 @@
 import { useEffect, useState } from 'react'
+import {
+  ChevronRight,
+  FileDown,
+  FlaskConical,
+  Library as LibraryIcon,
+  Loader2,
+  Moon,
+  NotebookPen,
+  Pencil,
+  Plus,
+  SlidersHorizontal,
+  Sun,
+  Trash2,
+} from 'lucide-react'
 import ChatPage from './pages/ChatPage'
 import type { Message } from './pages/ChatPage'
 import {
@@ -27,33 +41,66 @@ function toMessages(stored: StoredMessage[]): Message[] {
   )
 }
 
-function IconBtn({ label, onClick, children }: { label: string; onClick: (e: React.MouseEvent) => void; children: React.ReactNode }) {
+function HoverIcon({ label, onClick, children }: { label: string; onClick: (e: React.MouseEvent) => void; children: React.ReactNode }) {
   return (
-    <button title={label} aria-label={label}
+    <button
+      title={label}
+      aria-label={label}
       onClick={(e) => { e.stopPropagation(); onClick(e) }}
-      className="px-1 text-mentis-300 hover:text-white text-xs leading-none">
+      className="p-1 rounded text-stone-500 hover:text-stone-100 hover:bg-stone-700/60"
+    >
       {children}
     </button>
   )
 }
 
+function ToolLink({ active, onClick, icon, children, disabled }: {
+  active?: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode; disabled?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-[0.7rem] tracking-wide transition-colors disabled:opacity-50 ${
+        active ? 'text-mentis-300' : 'text-stone-500 hover:text-stone-200'
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}
+
+function PanelHeading({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="mb-5">
+      <h2 className="font-serif text-2xl text-stone-900 dark:text-stone-100">{title}</h2>
+      {sub && <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">{sub}</p>}
+    </div>
+  )
+}
+
 function LibraryPanel({ sources }: { sources: LibrarySource[] }) {
   return (
-    <div className="h-full overflow-y-auto px-8 py-6">
-      <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">Project library</h2>
-      <p className="text-sm text-gray-400 mb-4">DOI-verified sources gathered across this project.</p>
+    <div className="h-full overflow-y-auto px-10 py-8">
+      <PanelHeading title="Library" sub="DOI-verified sources gathered across this project." />
       {sources.length === 0 ? (
-        <p className="text-sm text-gray-400">No sources yet — run a research/draft request.</p>
+        <p className="text-sm text-stone-400">No sources yet — run a research or draft request.</p>
       ) : (
-        <ul className="space-y-2 max-w-3xl">
+        <ul className="max-w-3xl divide-y divide-stone-200 dark:divide-stone-800 border-y border-stone-200 dark:border-stone-800">
           {sources.map((s, i) => (
-            <li key={i} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
-              <p className="text-sm text-gray-800 dark:text-gray-100">
-                {s.doi ? <a href={`https://doi.org/${s.doi}`} target="_blank" rel="noopener noreferrer" className="text-mentis-700 dark:text-mentis-300 hover:underline">{s.title}</a> : s.title}
+            <li key={i} className="py-3">
+              <p className="text-[0.92rem] text-stone-800 dark:text-stone-100 leading-snug">
+                {s.doi ? (
+                  <a href={`https://doi.org/${s.doi}`} target="_blank" rel="noopener noreferrer"
+                    className="hover:text-mentis-700 dark:hover:text-mentis-300 hover:underline underline-offset-2">{s.title}</a>
+                ) : s.title}
               </p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {s.authors} · {s.year} · {s.venue || '—'}
-                {s.verified ? <span className="text-mentis-700"> · ✓ verified</span> : <span className="text-amber-600"> · unverified</span>}
+              <p className="font-mono text-[0.7rem] text-stone-500 mt-1">
+                {[s.authors, s.year, s.venue].filter(Boolean).join('  ·  ')}
+                {s.verified
+                  ? <span className="text-mentis-600 dark:text-mentis-400">  ·  verified</span>
+                  : <span className="text-amber-600">  ·  unverified</span>}
               </p>
             </li>
           ))}
@@ -66,23 +113,42 @@ function LibraryPanel({ sources }: { sources: LibrarySource[] }) {
 function SourcesPanel({ project, providers, onToggle }: { project: Project; providers: SourceProvider[]; onToggle: (key: string) => void }) {
   const enabled = new Set(project.sources || [])
   return (
-    <div className="h-full overflow-y-auto px-8 py-6">
-      <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">Sources — {project.name}</h2>
-      <p className="text-sm text-gray-400 mb-4">Choose where the Researcher gathers sources for this project. Changes apply to the next message.</p>
-      <ul className="space-y-2 max-w-xl">
+    <div className="h-full overflow-y-auto px-10 py-8">
+      <PanelHeading title="Sources" sub={`Where the Researcher gathers sources for “${project.name}”. Applies to the next message.`} />
+      <ul className="max-w-xl space-y-2">
         {providers.map((s) => (
-          <li key={s.key} className="flex items-center gap-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
-            <input type="checkbox" checked={enabled.has(s.key)} disabled={!s.available}
-              onChange={() => onToggle(s.key)} className="accent-mentis-600 w-4 h-4" />
-            <div className="flex-1">
-              <p className="text-sm text-gray-800 dark:text-gray-100">
-                {s.label}{s.free && <span className="text-xs text-mentis-600"> · free</span>}
-              </p>
-              {!s.available && <p className="text-xs text-amber-600">unavailable — no API key configured</p>}
-            </div>
+          <li key={s.key}>
+            <label className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+              s.available
+                ? 'border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 hover:border-mentis-300 dark:hover:border-mentis-700'
+                : 'border-stone-200 dark:border-stone-800 opacity-60 cursor-not-allowed'}`}>
+              <input type="checkbox" checked={enabled.has(s.key)} disabled={!s.available}
+                onChange={() => onToggle(s.key)} className="accent-mentis-600 w-4 h-4" />
+              <div className="flex-1">
+                <p className="text-sm text-stone-800 dark:text-stone-100">
+                  {s.label}
+                  {s.free && <span className="font-mono text-[0.65rem] text-stone-400 ml-2">FREE</span>}
+                </p>
+                {!s.available && <p className="text-xs text-amber-600 mt-0.5">unavailable — no API key configured</p>}
+              </div>
+            </label>
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function EmptyState({ title, actionLabel, onAction }: { title: string; actionLabel?: string; onAction?: () => void }) {
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center">
+      <p className="font-serif text-xl text-stone-500 dark:text-stone-400 mb-4">{title}</p>
+      {actionLabel && onAction && (
+        <button onClick={onAction}
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-mentis-600 hover:bg-mentis-700 text-white rounded-lg text-sm">
+          <Plus size={15} /> {actionLabel}
+        </button>
+      )}
     </div>
   )
 }
@@ -248,74 +314,84 @@ export default function Workspace() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      <aside className="w-64 bg-mentis-800 text-white flex flex-col shrink-0">
-        <div className="px-5 py-4 border-b border-mentis-700 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-white rounded-md flex items-center justify-center">
-              <span className="text-mentis-800 font-bold text-sm">M</span>
+    <div className="flex h-screen bg-stone-50 dark:bg-stone-950">
+      {/* Sidebar — deep warm ink in both themes */}
+      <aside className="w-72 bg-stone-900 text-stone-200 flex flex-col shrink-0 border-r border-stone-800">
+        <div className="px-5 py-4 flex items-center justify-between border-b border-stone-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-md bg-mentis-600 flex items-center justify-center">
+              <FlaskConical size={17} className="text-white" />
             </div>
-            <div>
-              <p className="font-semibold text-sm leading-tight">Mentis</p>
-              <p className="text-mentis-300 text-xs leading-tight">Research workspace</p>
+            <div className="leading-tight">
+              <p className="font-serif text-[1.05rem] text-stone-50">Mentis</p>
+              <p className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-stone-500">Research workspace</p>
             </div>
           </div>
-          <button onClick={newProject} title="New project" className="text-mentis-200 hover:text-white text-xl leading-none">+</button>
+          <button onClick={newProject} title="New project"
+            className="p-1.5 rounded-md text-stone-400 hover:text-stone-100 hover:bg-stone-800">
+            <Plus size={18} />
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
-          {projects.length === 0 && <p className="px-4 py-2 text-xs text-mentis-400">No projects yet — click + to create one.</p>}
+          {projects.length === 0 && (
+            <p className="px-5 py-3 text-xs text-stone-500 leading-relaxed">
+              No projects yet. Create one to start researching and drafting.
+            </p>
+          )}
           {projects.map((p) => {
             const isOpen = expanded.has(p.id)
             const convs = convsByProject[p.id] || []
             return (
-              <div key={p.id}>
+              <div key={p.id} className="px-2">
                 {/* Project row */}
-                <div className="group flex items-center px-2 py-1.5 mx-1 rounded-lg hover:bg-mentis-700 cursor-pointer"
-                  onClick={() => toggleExpand(p.id)}>
-                  <span className="w-4 text-mentis-300 text-xs">{isOpen ? '▾' : '▸'}</span>
-                  <span className="flex-1 text-sm truncate">{p.name}</span>
-                  <span className="opacity-0 group-hover:opacity-100 flex items-center">
-                    <IconBtn label="New conversation" onClick={() => newConversation(p.id)}>＋</IconBtn>
-                    <IconBtn label="Rename project" onClick={() => handleRenameProject(p)}>✎</IconBtn>
-                    <IconBtn label="Delete project" onClick={() => handleDeleteProject(p)}>🗑</IconBtn>
+                <div
+                  className="group flex items-center gap-1 px-2 py-1.5 rounded-md hover:bg-stone-800/60 cursor-pointer"
+                  onClick={() => toggleExpand(p.id)}
+                >
+                  <ChevronRight size={14} className={`text-stone-500 shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                  <span className="flex-1 text-sm text-stone-200 truncate">{p.name}</span>
+                  <span className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
+                    <HoverIcon label="New conversation" onClick={() => newConversation(p.id)}><Plus size={14} /></HoverIcon>
+                    <HoverIcon label="Rename project" onClick={() => handleRenameProject(p)}><Pencil size={13} /></HoverIcon>
+                    <HoverIcon label="Delete project" onClick={() => handleDeleteProject(p)}><Trash2 size={13} /></HoverIcon>
                   </span>
                 </div>
 
-                {/* Conversations + project tools */}
                 {isOpen && (
-                  <div className="ml-4 border-l border-mentis-700 pl-1">
-                    {convs.map((c) => (
-                      <div key={c.id}
-                        className={`group flex items-center px-2 py-1 mx-1 rounded-lg cursor-pointer text-sm ${
-                          c.id === activeConvId && view === 'chat' ? 'bg-mentis-600' : 'hover:bg-mentis-700 text-mentis-100'}`}
-                        onClick={() => openConversation(p.id, c.id)}>
-                        <span className="flex-1 truncate">{c.title}</span>
-                        <span className="opacity-0 group-hover:opacity-100 flex items-center">
-                          <IconBtn label="Rename conversation" onClick={() => handleRenameConversation(p.id, c)}>✎</IconBtn>
-                          <IconBtn label="Delete conversation" onClick={() => handleDeleteConversation(p.id, c)}>🗑</IconBtn>
-                        </span>
-                      </div>
-                    ))}
-                    <div className="flex items-center gap-3 px-3 py-1 text-xs text-mentis-300">
-                      <button onClick={() => openLibrary(p.id)}
-                        className={`hover:text-white ${view === 'library' && activeProjectId === p.id ? 'text-white' : ''}`}>
-                        📚 Library ({(libByProject[p.id] || []).length})
-                      </button>
-                      <button onClick={() => openSources(p.id)}
-                        className={`hover:text-white ${view === 'sources' && activeProjectId === p.id ? 'text-white' : ''}`}>
-                        ⚙ Sources
-                      </button>
-                      <button onClick={() => editBrief(p.id)} className="hover:text-white">✎ Brief</button>
+                  <div className="ml-3.5 pl-2 border-l border-stone-800">
+                    {convs.map((c) => {
+                      const active = c.id === activeConvId && view === 'chat'
+                      return (
+                        <div key={c.id}
+                          className={`group flex items-center px-2 py-1 rounded-md cursor-pointer text-[0.82rem] ${
+                            active ? 'bg-stone-800 text-stone-50' : 'text-stone-400 hover:bg-stone-800/50 hover:text-stone-200'}`}
+                          onClick={() => openConversation(p.id, c.id)}>
+                          <span className="flex-1 truncate">{c.title}</span>
+                          <span className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
+                            <HoverIcon label="Rename conversation" onClick={() => handleRenameConversation(p.id, c)}><Pencil size={12} /></HoverIcon>
+                            <HoverIcon label="Delete conversation" onClick={() => handleDeleteConversation(p.id, c)}><Trash2 size={12} /></HoverIcon>
+                          </span>
+                        </div>
+                      )
+                    })}
+
+                    {/* Project tools */}
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <ToolLink active={view === 'library' && activeProjectId === p.id} onClick={() => openLibrary(p.id)}
+                        icon={<LibraryIcon size={13} />}>Library · {(libByProject[p.id] || []).length}</ToolLink>
+                      <ToolLink active={view === 'sources' && activeProjectId === p.id} onClick={() => openSources(p.id)}
+                        icon={<SlidersHorizontal size={13} />}>Sources</ToolLink>
+                      <ToolLink onClick={() => editBrief(p.id)} icon={<NotebookPen size={13} />}>Brief</ToolLink>
                     </div>
-                    <div className="flex items-center gap-3 px-3 pb-1 text-xs text-mentis-300">
-                      <span className="text-mentis-400">Whitepaper →</span>
-                      <button onClick={() => doCompile(p.id, 'pdf')} disabled={compiling === p.id}
-                        className="hover:text-white disabled:opacity-50">
-                        {compiling === p.id ? '⏳ Compiling…' : '📄 PDF'}
-                      </button>
-                      <button onClick={() => doCompile(p.id, 'docx')} disabled={compiling === p.id}
-                        className="hover:text-white disabled:opacity-50">Word</button>
+                    <div className="mb-1.5 flex items-center gap-1 pl-1.5">
+                      <span className="font-mono text-[0.6rem] uppercase tracking-wider text-stone-600">Compile</span>
+                      <ToolLink onClick={() => doCompile(p.id, 'pdf')} disabled={compiling === p.id}
+                        icon={compiling === p.id ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}>
+                        {compiling === p.id ? 'Working' : 'PDF'}
+                      </ToolLink>
+                      <ToolLink onClick={() => doCompile(p.id, 'docx')} disabled={compiling === p.id}
+                        icon={<FileDown size={13} />}>Word</ToolLink>
                     </div>
                   </div>
                 )}
@@ -324,19 +400,18 @@ export default function Workspace() {
           })}
         </div>
 
-        <div className="px-3 py-2 border-t border-mentis-700">
-          <button onClick={() => setDark((d) => !d)} className="text-xs text-mentis-200 hover:text-white">
-            {dark ? '☀️ Light mode' : '🌙 Dark mode'}
+        <div className="px-4 py-3 border-t border-stone-800">
+          <button onClick={() => setDark((d) => !d)}
+            className="flex items-center gap-2 text-xs text-stone-400 hover:text-stone-100">
+            {dark ? <Sun size={14} /> : <Moon size={14} />}
+            {dark ? 'Light mode' : 'Dark mode'}
           </button>
         </div>
       </aside>
 
       <main className="flex-1 overflow-hidden">
         {!activeProjectId && view === 'chat' ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-gray-400">
-            <p className="text-lg font-light mb-2">Create a project to begin</p>
-            <button onClick={newProject} className="px-4 py-2 bg-mentis-600 text-white rounded-lg text-sm hover:bg-mentis-700">New project</button>
-          </div>
+          <EmptyState title="Create a project to begin" actionLabel="New project" onAction={newProject} />
         ) : view === 'sources' && activeProjectId && projects.find((p) => p.id === activeProjectId) ? (
           <SourcesPanel
             project={projects.find((p) => p.id === activeProjectId)!}
@@ -348,12 +423,11 @@ export default function Workspace() {
         ) : activeConvId ? (
           <ChatPage key={activeConvId} conversationId={activeConvId} initialMessages={initialMessages} onTitle={updateConvTitle} />
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center text-gray-400">
-            <p className="text-lg font-light mb-2">No conversation open</p>
-            {activeProjectId && (
-              <button onClick={() => newConversation(activeProjectId)} className="px-4 py-2 bg-mentis-600 text-white rounded-lg text-sm hover:bg-mentis-700">New conversation</button>
-            )}
-          </div>
+          <EmptyState
+            title="No conversation open"
+            actionLabel={activeProjectId ? 'New conversation' : undefined}
+            onAction={activeProjectId ? () => newConversation(activeProjectId) : undefined}
+          />
         )}
       </main>
     </div>

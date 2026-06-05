@@ -1,5 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import {
+  ArrowUp,
+  AlertTriangle,
+  BadgeCheck,
+  ChevronRight,
+  FileDown,
+  FileSearch,
+  FileText,
+  GraduationCap,
+  Library,
+  Loader2,
+  PenLine,
+  Telescope,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
 import { streamChat, downloadDocument } from '../api/client'
 import type { Citation } from '../api/types'
 
@@ -29,7 +45,7 @@ interface AssistantMessage {
 export type Message = UserMessage | AssistantMessage
 
 // ---------------------------------------------------------------------------
-// Activity labels (Claude Code-style "what it's doing now")
+// Agent activity / icons
 // ---------------------------------------------------------------------------
 
 const TOOL_ACTIVITY: Record<string, string> = {
@@ -50,19 +66,24 @@ const TOOL_LABELS: Record<string, string> = {
   draft_section: 'Drafted section',
 }
 
+const TOOL_ICON: Record<string, LucideIcon> = {
+  research: Telescope,
+  search_literature: Library,
+  scopus_search: GraduationCap,
+  fetch_pdf_text: FileText,
+  verify_doi: BadgeCheck,
+  draft_section: PenLine,
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
 function ActivityLine({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-mentis-700 dark:text-mentis-300 mb-2">
-      <span className="flex gap-0.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.3s]" />
-        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.15s]" />
-        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce" />
-      </span>
-      <span className="italic">{label}…</span>
+    <div className="flex items-center gap-2 mb-2.5 text-stone-500 dark:text-stone-400">
+      <Loader2 size={13} className="animate-spin text-mentis-600 dark:text-mentis-400" />
+      <span className="font-mono text-[0.7rem] uppercase tracking-[0.12em]">{label}</span>
     </div>
   )
 }
@@ -71,23 +92,23 @@ function ToolTimeline({ tools }: { tools: ToolCall[] }) {
   const [open, setOpen] = useState(false)
   if (!tools.length) return null
   return (
-    <div className="mt-2">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700"
-      >
-        <svg className={`transition-transform ${open ? 'rotate-90' : ''}`} width="11" height="11"
-          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-          strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+    <div className="mt-3">
+      <button onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 font-mono text-[0.7rem] text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+        <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
         {tools.length} step{tools.length !== 1 ? 's' : ''}
       </button>
       {open && (
-        <ol className="mt-1.5 space-y-1 pl-3 border-l-2 border-mentis-100">
-          {tools.map((t, i) => (
-            <li key={i} className="text-xs text-gray-600">
-              <span className="font-mono text-mentis-700">🔧 {TOOL_LABELS[t.name] ?? t.name}</span>
-            </li>
-          ))}
+        <ol className="mt-2 space-y-1.5 pl-3 border-l border-stone-200 dark:border-stone-700">
+          {tools.map((t, i) => {
+            const Icon = TOOL_ICON[t.name] ?? Wrench
+            return (
+              <li key={i} className="flex items-center gap-2 text-[0.78rem] text-stone-600 dark:text-stone-400">
+                <Icon size={13} className="text-mentis-600 dark:text-mentis-400 shrink-0" />
+                {TOOL_LABELS[t.name] ?? t.name}
+              </li>
+            )
+          })}
         </ol>
       )}
     </div>
@@ -100,23 +121,25 @@ function SourcesSummary({ citations }: { citations: Citation[] }) {
   const flagged = citations.filter((c) => c.supported === false)
   const unverifiable = citations.filter((c) => c.supported !== true && c.supported !== false)
   return (
-    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-      <span className="text-mentis-700 dark:text-mentis-300 font-medium">
-        ✓ {backed}/{citations.length} backed by their source
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-3 font-mono text-[0.7rem]">
+      <span className="inline-flex items-center gap-1 text-mentis-700 dark:text-mentis-400">
+        <BadgeCheck size={13} /> {backed}/{citations.length} backed by source
       </span>
       {flagged.length > 0 && (
-        <span className="text-amber-600"> · ⚠ {flagged.length} may not support the claim ({flagged.map((c) => `[${c.n}]`).join(' ')})</span>
+        <span className="inline-flex items-center gap-1 text-amber-600">
+          <AlertTriangle size={12} /> {flagged.length} unsupported ({flagged.map((c) => `[${c.n}]`).join(' ')})
+        </span>
       )}
       {unverifiable.length > 0 && (
-        <span> · {unverifiable.length} not auto-verified</span>
+        <span className="text-stone-400">{unverifiable.length} not auto-verified</span>
       )}
-    </p>
+    </div>
   )
 }
 
 function AssistantBubble({ msg }: { msg: AssistantMessage }) {
   return (
-    <div className="bg-white dark:bg-gray-800 dark:text-gray-100 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 shadow-sm max-w-2xl w-full">
+    <div className="max-w-2xl w-full rounded-lg border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-5 py-4">
       {msg.status === 'streaming' && <ActivityLine label={msg.activity || 'Working'} />}
       {msg.content && (
         <div className="assistant-prose">
@@ -126,24 +149,14 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
       <ToolTimeline tools={msg.tools} />
       {msg.status === 'done' && <SourcesSummary citations={msg.citations} />}
       {msg.status === 'done' && msg.content && (
-        <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex gap-4">
+        <div className="mt-3 pt-3 border-t border-stone-100 dark:border-stone-800 flex gap-5">
           {(['pdf', 'docx'] as const).map((fmt) => (
-            <button
-              key={fmt}
-              onClick={() =>
-                downloadDocument(msg.content, fmt).catch((e) =>
-                  alert('Export failed: ' + (e instanceof Error ? e.message : 'error')),
-                )
-              }
-              className="inline-flex items-center gap-1.5 text-xs text-mentis-700 dark:text-mentis-300 hover:text-mentis-900 dark:hover:text-mentis-200"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              {fmt === 'pdf' ? 'Download PDF' : 'Download Word'}
+            <button key={fmt}
+              onClick={() => downloadDocument(msg.content, fmt).catch((e) =>
+                alert('Export failed: ' + (e instanceof Error ? e.message : 'error')))}
+              className="inline-flex items-center gap-1.5 text-xs text-stone-500 hover:text-mentis-700 dark:hover:text-mentis-300">
+              <FileDown size={14} />
+              {fmt === 'pdf' ? 'PDF' : 'Word'}
             </button>
           ))}
         </div>
@@ -178,7 +191,6 @@ export default function ChatPage({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Update the most recent assistant message in place.
   const patchLast = (fn: (m: AssistantMessage) => AssistantMessage) => {
     setMessages((prev) => {
       const next = [...prev]
@@ -192,7 +204,6 @@ export default function ChatPage({
     })
   }
 
-  // Process the queue one run at a time (sequential — safe for the shared collector).
   const pump = async () => {
     if (runningRef.current) return
     const q = queueRef.current.shift()
@@ -261,39 +272,38 @@ export default function ChatPage({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 -mt-10">
-            <div className="w-14 h-14 bg-mentis-50 rounded-full flex items-center justify-center mb-4">
-              <svg className="text-mentis-600" width="28" height="28" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <p className="text-xl font-light text-gray-600 mb-1">Research &amp; draft a whitepaper</p>
-            <p className="text-sm text-gray-400 max-w-sm">
-              e.g. <span className="italic">"Draft an introduction on CO₂ absorption in biobased solvents"</span> —
-              watch it research and write underneath. You can keep typing while it works.
-            </p>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {msg.role === 'user' ? (
-              <div className="bg-mentis-600 text-white rounded-xl px-4 py-2.5 max-w-lg">
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+      <div className="flex-1 overflow-y-auto px-6 py-8">
+        <div className="max-w-3xl mx-auto space-y-5">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center text-center pt-24">
+              <div className="w-12 h-12 rounded-full bg-mentis-50 dark:bg-stone-800 flex items-center justify-center mb-5">
+                <FileSearch size={22} className="text-mentis-600 dark:text-mentis-400" />
               </div>
-            ) : (
-              <AssistantBubble msg={msg} />
-            )}
-          </div>
-        ))}
+              <p className="font-serif text-2xl text-stone-700 dark:text-stone-200 mb-2">Research &amp; draft a whitepaper</p>
+              <p className="text-sm text-stone-500 dark:text-stone-400 max-w-md leading-relaxed">
+                e.g. <span className="italic">“Draft an introduction on CO₂ absorption in biobased solvents.”</span>{' '}
+                Watch the agents research and write beneath your message — you can keep typing while they work.
+              </p>
+            </div>
+          )}
 
-        <div ref={bottomRef} />
+          {messages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'user' ? (
+                <div className="max-w-lg rounded-lg bg-mentis-600 text-white px-4 py-2.5">
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                </div>
+              ) : (
+                <AssistantBubble msg={msg} />
+              )}
+            </div>
+          ))}
+
+          <div ref={bottomRef} />
+        </div>
       </div>
 
-      <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
+      <div className="shrink-0 border-t border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-6 py-4">
         <div className="max-w-3xl mx-auto">
           <div className="flex gap-2 items-end">
             <textarea
@@ -301,26 +311,18 @@ export default function ChatPage({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask Mentis to research or draft… (Enter to send — you can keep sending while it works)"
+              placeholder="Ask Mentis to research or draft…  (Enter to send — you can keep sending while it works)"
               rows={2}
-              className="flex-1 resize-none border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-mentis-500 focus:border-transparent leading-relaxed"
+              className="flex-1 resize-none rounded-lg border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-800 dark:text-stone-100 placeholder-stone-400 px-4 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-mentis-500/40 focus:border-mentis-500"
             />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              aria-label="Send"
-              className="shrink-0 w-10 h-10 flex items-center justify-center bg-mentis-600 text-white rounded-xl hover:bg-mentis-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
+            <button onClick={handleSend} disabled={!input.trim()} aria-label="Send"
+              className="shrink-0 w-10 h-10 flex items-center justify-center bg-mentis-600 text-white rounded-lg hover:bg-mentis-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <ArrowUp size={18} />
             </button>
           </div>
-          <div className="mt-1.5 text-xs text-gray-400">
+          <div className="mt-1.5 font-mono text-[0.65rem] uppercase tracking-wider text-stone-400">
             {working ? 'Working — you can still send' : ''}
-            {queueRef.current.length > 0 ? ` · ${queueRef.current.length} queued` : ''}
+            {queueRef.current.length > 0 ? `  ·  ${queueRef.current.length} queued` : ''}
           </div>
         </div>
       </div>
