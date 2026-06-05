@@ -19,6 +19,7 @@ from .agents import AVAILABLE_SOURCES, build_supervisor
 from .compiler import compile_whitepaper
 from .config import get_settings
 from .export import build_docx, build_pdf
+from .sandbox import set_workspace, workspace_for
 from .sources import set_active_sources
 from .store import get_store
 from .streaming import run_agent_sse
@@ -222,6 +223,7 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
         project = store.get_project(conv["project_id"])
 
     set_active_sources(project.get("sources") or ["openalex"])
+    set_workspace(workspace_for(project["id"]))  # Analyst reads/writes this project's files
     history = store.get_messages(conv["id"], limit=settings.history_limit)
     # Auto-title the conversation from its first message.
     title = conv.get("title")
