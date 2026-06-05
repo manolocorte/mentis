@@ -1,0 +1,10 @@
+strands-agents>=1.42
+strands-agents-tools
+fastapi>=0.115
+uvicorn[standard]>=0.34
+httpx>=0.28
+pydantic-settings>=2.7
+pypdf>=5.1
+boto3>=1.35
+markdown>=3.7
+xhtml2pdf>=0.2.16

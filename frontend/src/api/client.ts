@@ -1,19 +1,12 @@
-import type {
-  ChatRequest,
-  ChatResponse,
-  Conversation,
-  PapersResponse,
-  DocumentsResponse,
-  HarvestRequest,
-  HarvestResponse,
-  HealthResponse,
-} from './types'
+import type { HealthResponse, StreamCallbacks } from './types'
 
 // ---------------------------------------------------------------------------
 // Config — read once from env at module load time
 // ---------------------------------------------------------------------------
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://localhost:8000'
+const BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ??
+  'http://localhost:8080'
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
 
 function headers(extra?: Record<string, string>): HeadersInit {
@@ -22,48 +15,96 @@ function headers(extra?: Record<string, string>): HeadersInit {
   return { ...h, ...extra }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init)
-  if (!res.ok) {
+export async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${BASE_URL}/health`, { headers: headers() })
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  return res.json() as Promise<HealthResponse>
+}
+
+// ---------------------------------------------------------------------------
+// Streaming chat (SSE) — Claude Code-style transcript
+// ---------------------------------------------------------------------------
+
+function dispatchFrame(frame: string, cb: StreamCallbacks): void {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of frame.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+  }
+  if (!dataLines.length) return
+  let data: any
+  try {
+    data = JSON.parse(dataLines.join('\n'))
+  } catch {
+    return
+  }
+  switch (event) {
+    case 'conversation':
+      cb.onConversation?.(data.conversation_id)
+      break
+    case 'token':
+      cb.onToken?.(data.text ?? '')
+      break
+    case 'tool_call':
+      cb.onToolCall?.({ name: data.name, input: data.input })
+      break
+    case 'run_finished':
+      cb.onFinished?.(data.text ?? '')
+      break
+    case 'error':
+      cb.onError?.(data.message ?? 'unknown error')
+      break
+  }
+}
+
+export async function streamChat(
+  body: { message: string; conversation_id?: string },
+  cb: StreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/chat/stream`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!res.ok || !res.body) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(`${res.status}: ${text}`)
   }
-  return res.json() as Promise<T>
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const frames = buf.split('\n\n')
+    buf = frames.pop() ?? ''
+    for (const frame of frames) if (frame.trim()) dispatchFrame(frame, cb)
+  }
+  if (buf.trim()) dispatchFrame(buf, cb)
 }
 
 // ---------------------------------------------------------------------------
-// API calls
+// PDF export
 // ---------------------------------------------------------------------------
 
-export function getHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health', { headers: headers() })
-}
-
-export function postChat(body: ChatRequest): Promise<ChatResponse> {
-  return request<ChatResponse>('/chat', {
+export async function downloadPdf(markdown: string, title?: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/export/pdf`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify(body),
+    body: JSON.stringify({ markdown, title }),
   })
-}
-
-export function getConversation(id: string): Promise<Conversation> {
-  return request<Conversation>(`/conversations/${id}`, { headers: headers() })
-}
-
-export function searchPapers(query: string): Promise<PapersResponse> {
-  const params = new URLSearchParams({ query })
-  return request<PapersResponse>(`/papers?${params}`, { headers: headers() })
-}
-
-export function getDocuments(): Promise<DocumentsResponse> {
-  return request<DocumentsResponse>('/documents', { headers: headers() })
-}
-
-export function postHarvest(body: HarvestRequest): Promise<HarvestResponse> {
-  return request<HarvestResponse>('/harvest', {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(body),
-  })
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'mentis-whitepaper.pdf'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }

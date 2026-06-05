@@ -61,6 +61,7 @@ build/
 
 # --- Data / generated ---
 data/
+.data/
 scripts/*.sql
 
 # --- Legacy code kept locally, not in the clean repo ---
