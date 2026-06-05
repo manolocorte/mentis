@@ -18,7 +18,37 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .config import get_settings
+
 IMAGE = "mentis-sandbox:latest"
+
+
+# --- Workspace context -----------------------------------------------------
+# Each project gets its own workspace directory (the local stand-in for an S3
+# prefix). Uploaded files live there and produced files land there, so work
+# persists per project across conversations. The server sets the active
+# workspace per request; tools read it via current_workspace().
+
+_current_workspace: Path | None = None
+
+
+def workspace_root() -> Path:
+    return Path(get_settings().store_path).parent / "workspaces"
+
+
+def workspace_for(project_id: str) -> Path:
+    return workspace_root() / project_id
+
+
+def set_workspace(path: Path | str | None) -> None:
+    global _current_workspace
+    _current_workspace = Path(path) if path is not None else None
+
+
+def current_workspace() -> Path:
+    ws = _current_workspace if _current_workspace is not None else workspace_root() / "_scratch"
+    ws.mkdir(parents=True, exist_ok=True)
+    return ws
 
 
 @dataclass

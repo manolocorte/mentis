@@ -1,7 +1,8 @@
-"""Four-agent team (Strands "agents-as-tools"):
+"""Agent team (Strands "agents-as-tools"):
 
   Orchestrator (Nova)  → plans, delegates, returns the result
     ├─ research(topic)        → Researcher (Nova): focused queries + relevant gathering
+    ├─ analyze(task)          → Analyst (Claude → Nova fallback): computes/plots via run_python
     └─ draft_section(...)      → Writer (Claude Sonnet → Nova fallback): grounded prose
 
 The Validator runs deterministically after the draft (app/citations.py), so it always
@@ -71,11 +72,34 @@ def draft_section(request: str, sources: str) -> str:
     return f"drafting failed: {last_err}"
 
 
+@tool
+def analyze(task: str) -> str:
+    """Compute numbers, process an uploaded data file (Excel/CSV/image), or generate a figure via
+    the Analyst, who writes and runs Python (numpy/pandas/scipy/sympy/matplotlib/CoolProp) in a
+    sandbox. Use for any quantity that should be COMPUTED rather than estimated. Returns the results
+    and the names of any files saved to the project workspace.
+    """
+    last_err: Exception | None = None
+    for make_model in (models.draft_model, models.supervisor_model):  # Claude → Nova fallback
+        try:
+            analyst = Agent(
+                model=make_model(),
+                system_prompt=prompts.ANALYST_PROMPT,
+                callback_handler=None,
+                tools=[tools.run_python],
+            )
+            return str(analyst(task))
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning("analyst model failed, trying fallback: %s", e)
+    return f"analysis failed: {last_err}"
+
+
 def build_supervisor() -> Agent:
-    """The Orchestrator: delegates to research() and draft_section(), can read PDFs."""
+    """The Orchestrator: delegates to research(), analyze() and draft_section(), can read PDFs."""
     return Agent(
         model=models.supervisor_model(),
         system_prompt=prompts.SUPERVISOR_PROMPT,
         callback_handler=None,
-        tools=[research, draft_section, tools.fetch_pdf_text, tools.verify_doi],
+        tools=[research, analyze, draft_section, tools.fetch_pdf_text, tools.verify_doi],
     )

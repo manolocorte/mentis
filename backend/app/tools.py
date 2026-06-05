@@ -177,6 +177,37 @@ def fetch_pdf_text(url: str, max_chars: int = 8000) -> str:
     return text[:max_chars] if text.strip() else "PDF had no extractable text."
 
 
+def _run_python_impl(code: str) -> str:
+    from . import sandbox
+
+    ws = sandbox.current_workspace()
+    res = sandbox.run_python(code, ws)
+    parts: list[str] = []
+    if res.timed_out:
+        parts.append("TIMEOUT: execution exceeded the time limit.")
+    if res.stdout.strip():
+        parts.append("STDOUT:\n" + res.stdout[:6000])
+    if res.exit_code != 0 and res.stderr.strip():
+        parts.append(f"ERROR (exit {res.exit_code}):\n" + res.stderr[-3000:])
+    if res.files:
+        parts.append("FILES SAVED to the project workspace: " + ", ".join(res.files))
+    return "\n\n".join(parts) if parts else "(ran with no output)"
+
+
+@tool
+def run_python(code: str) -> str:
+    """Run Python in a sandboxed container to compute results, analyse data, or generate
+    figures — use this instead of doing arithmetic or estimating numbers yourself. A full
+    scientific stack is available: numpy, pandas, scipy, sympy, matplotlib, openpyxl (read/
+    write .xlsx), Pillow, and CoolProp for thermophysical properties.
+
+    Files in the project workspace are readable by their relative path. Write outputs
+    (figures as PNG, processed spreadsheets) to the current directory — they are saved to
+    the project and reported back. Print results you need to see; there is NO network access.
+    """
+    return _run_python_impl(code)
+
+
 @tool
 def verify_doi(doi: str) -> str:
     """Verify a DOI actually resolves (via OpenAlex). Returns the resolved title/year or a
