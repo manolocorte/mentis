@@ -2,7 +2,9 @@
 + type hints into the tool schema the model sees.
 
 Research is done LIVE per call (no persistent corpus). OpenAlex is free and needs no
-key; Scopus activates only when SCOPUS_API_KEY is set.
+key; Scopus activates only when SCOPUS_API_KEY is set. Each result is recorded in the
+per-run source collector (app.sources) so references can be built deterministically
+and DOI-verified afterwards — the numbers the model sees are stable global indices.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import httpx
 from strands import tool
 
 from .config import get_settings
+from .sources import Source, current
 
 
 def _ua() -> dict[str, str]:
@@ -27,15 +30,15 @@ def _abstract_from_inverted(idx: dict | None) -> str:
         for loc in locs:
             positions.append((loc, word))
     positions.sort()
-    text = " ".join(w for _, w in positions)
-    return text[:600]
+    return " ".join(w for _, w in positions)[:600]
 
 
 @tool
 def search_literature(query: str, limit: int = 8) -> str:
     """Search peer-reviewed scientific literature (OpenAlex). Returns a numbered list of
-    sources with title, authors, year, venue, DOI and an abstract snippet. Use this to
-    gather grounding sources BEFORE writing anything.
+    sources with title, authors, year, venue, DOI and an abstract snippet. The numbers are
+    stable citation indices — cite them as [n] and they will resolve to real references.
+    Use this to gather grounding sources BEFORE writing anything.
     """
     params = {
         "search": query,
@@ -46,24 +49,27 @@ def search_literature(query: str, limit: int = 8) -> str:
         r = httpx.get("https://api.openalex.org/works", params=params, headers=_ua(), timeout=25)
         r.raise_for_status()
         results = r.json().get("results", [])
-    except Exception as e:  # noqa: BLE001 - surface to the model as text
+    except Exception as e:  # noqa: BLE001
         return f"literature search failed: {e}"
 
     if not results:
         return f"No literature found for: {query}"
 
+    coll = current()
     lines: list[str] = []
-    for i, w in enumerate(results, 1):
+    for w in results:
         authors = ", ".join(
             a.get("author", {}).get("display_name", "")
             for a in (w.get("authorships") or [])[:4]
         )
         venue = ((w.get("primary_location") or {}).get("source") or {}).get("display_name", "")
         doi = (w.get("doi") or "").replace("https://doi.org/", "")
+        year = str(w.get("publication_year") or "n.d.")
+        title = w.get("title", "Untitled")
+        idx = coll.add(Source(title=title, authors=authors, year=year, venue=venue, doi=doi))
         snippet = _abstract_from_inverted(w.get("abstract_inverted_index"))
         lines.append(
-            f"[{i}] {w.get('title', 'Untitled')} — {authors} ({w.get('publication_year', 'n.d.')}). "
-            f"{venue}. DOI: {doi or 'n/a'}\n    {snippet}"
+            f"[{idx}] {title} — {authors} ({year}). {venue}. DOI: {doi or 'n/a'}\n    {snippet}"
         )
     return "\n".join(lines)
 
@@ -71,7 +77,8 @@ def search_literature(query: str, limit: int = 8) -> str:
 @tool
 def scopus_search(query: str, limit: int = 8) -> str:
     """Search the university's Scopus subscription for peer-reviewed sources. Only works
-    when a Scopus API key is configured; otherwise tells you it is unavailable.
+    when a Scopus API key is configured; otherwise tells you it is unavailable. Returns
+    numbered sources whose [n] indices resolve to real references.
     """
     s = get_settings()
     if not s.scopus_api_key:
@@ -88,13 +95,17 @@ def scopus_search(query: str, limit: int = 8) -> str:
         return f"Scopus search failed: {e}"
     if not entries:
         return f"No Scopus results for: {query}"
+
+    coll = current()
     lines = []
-    for i, e in enumerate(entries, 1):
-        lines.append(
-            f"[{i}] {e.get('dc:title', 'Untitled')} — {e.get('dc:creator', '')} "
-            f"({e.get('prism:coverDate', '')[:4]}). {e.get('prism:publicationName', '')}. "
-            f"DOI: {e.get('prism:doi', 'n/a')}"
-        )
+    for e in entries:
+        title = e.get("dc:title", "Untitled")
+        authors = e.get("dc:creator", "")
+        year = (e.get("prism:coverDate", "") or "")[:4] or "n.d."
+        venue = e.get("prism:publicationName", "")
+        doi = e.get("prism:doi", "") or ""
+        idx = coll.add(Source(title=title, authors=authors, year=year, venue=venue, doi=doi))
+        lines.append(f"[{idx}] {title} — {authors} ({year}). {venue}. DOI: {doi or 'n/a'}")
     return "\n".join(lines)
 
 
@@ -122,9 +133,7 @@ def verify_doi(doi: str) -> str:
     """
     clean = doi.strip().replace("https://doi.org/", "")
     try:
-        r = httpx.get(
-            f"https://api.openalex.org/works/doi:{clean}", headers=_ua(), timeout=20
-        )
+        r = httpx.get(f"https://api.openalex.org/works/doi:{clean}", headers=_ua(), timeout=20)
         if r.status_code == 404:
             return f"NOT FOUND: {clean} does not resolve — do not cite it."
         r.raise_for_status()

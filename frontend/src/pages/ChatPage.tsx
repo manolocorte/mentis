@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { streamChat, downloadPdf } from '../api/client'
+import type { Citation } from '../api/types'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,67 +21,102 @@ interface AssistantMessage {
   role: 'assistant'
   content: string
   tools: ToolCall[]
+  citations: Citation[]
+  activity?: string
   status: 'streaming' | 'done' | 'error'
 }
 
 type Message = UserMessage | AssistantMessage
 
 // ---------------------------------------------------------------------------
+// Activity labels (Claude Code-style "what it's doing now")
+// ---------------------------------------------------------------------------
+
+const TOOL_ACTIVITY: Record<string, string> = {
+  search_literature: 'Researching the literature',
+  scopus_search: 'Searching Scopus',
+  fetch_pdf_text: 'Reading a paper',
+  verify_doi: 'Verifying a DOI',
+  draft_section: 'Drafting the section',
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  search_literature: 'Searched literature (OpenAlex)',
+  scopus_search: 'Searched Scopus',
+  fetch_pdf_text: 'Read PDF',
+  verify_doi: 'Verified DOI',
+  draft_section: 'Drafted section',
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-const TOOL_LABELS: Record<string, string> = {
-  search_literature: 'Searching literature (OpenAlex)',
-  scopus_search: 'Searching Scopus',
-  fetch_pdf_text: 'Reading PDF',
-  verify_doi: 'Verifying DOI',
-  draft_section: 'Drafting section (Claude Sonnet)',
+function ActivityLine({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-mentis-700 mb-2">
+      <span className="flex gap-0.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.3s]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.15s]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce" />
+      </span>
+      <span className="italic">{label}…</span>
+    </div>
+  )
 }
 
-function ToolCallCard({ call }: { call: ToolCall }) {
+function ToolTimeline({ tools }: { tools: ToolCall[] }) {
   const [open, setOpen] = useState(false)
-  const label = TOOL_LABELS[call.name] ?? call.name
+  if (!tools.length) return null
   return (
-    <div className="mt-2 border border-mentis-100 rounded-lg bg-mentis-50/60">
+    <div className="mt-2">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-mentis-800"
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700"
       >
-        <svg
-          className={`transition-transform ${open ? 'rotate-90' : ''}`}
-          width="11" height="11" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-        <span className="font-mono">🔧 {label}</span>
+        <svg className={`transition-transform ${open ? 'rotate-90' : ''}`} width="11" height="11"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+        {tools.length} step{tools.length !== 1 ? 's' : ''}
       </button>
       {open && (
-        <pre className="px-3 pb-2 text-[11px] text-gray-500 whitespace-pre-wrap break-words">
-          {JSON.stringify(call.input, null, 2)}
-        </pre>
+        <ol className="mt-1.5 space-y-1 pl-3 border-l-2 border-mentis-100">
+          {tools.map((t, i) => (
+            <li key={i} className="text-xs text-gray-600">
+              <span className="font-mono text-mentis-700">🔧 {TOOL_LABELS[t.name] ?? t.name}</span>
+            </li>
+          ))}
+        </ol>
       )}
     </div>
+  )
+}
+
+function SourcesSummary({ citations }: { citations: Citation[] }) {
+  if (!citations.length) return null
+  const verified = citations.filter((c) => c.verified).length
+  const flagged = citations.filter((c) => !c.verified)
+  return (
+    <p className="text-xs text-gray-500 mt-2">
+      <span className="text-mentis-700 font-medium">✓ {verified}/{citations.length} sources verified</span>
+      {flagged.length > 0 && (
+        <span className="text-amber-600"> · {flagged.length} unverified ({flagged.map((c) => `[${c.n}]`).join(' ')})</span>
+      )}
+    </p>
   )
 }
 
 function AssistantBubble({ msg }: { msg: AssistantMessage }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm max-w-2xl w-full">
-      {msg.tools.map((t, i) => (
-        <ToolCallCard key={`${t.name}-${i}`} call={t} />
-      ))}
+      {msg.status === 'streaming' && <ActivityLine label={msg.activity || 'Working'} />}
       {msg.content && (
-        <div className="assistant-prose mt-2">
+        <div className="assistant-prose">
           <ReactMarkdown>{msg.content}</ReactMarkdown>
         </div>
       )}
-      {msg.status === 'streaming' && (
-        <span className="inline-block w-2 h-4 ml-0.5 align-text-bottom bg-mentis-500 animate-pulse" />
-      )}
-      {msg.status === 'error' && (
-        <p className="text-xs text-red-500 mt-1">stream error — see message above</p>
-      )}
+      <ToolTimeline tools={msg.tools} />
+      {msg.status === 'done' && <SourcesSummary citations={msg.citations} />}
       {msg.status === 'done' && msg.content && (
         <div className="mt-3 pt-2 border-t border-gray-100">
           <button
@@ -112,8 +148,11 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [working, setWorking] = useState(false)
   const [conversationId, setConversationId] = useState<string | undefined>()
+  const convIdRef = useRef<string | undefined>(undefined)
+  const runningRef = useRef(false)
+  const queueRef = useRef<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -121,7 +160,7 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Mutate the last (assistant) message in place.
+  // Update the most recent assistant message in place.
   const patchLast = (fn: (m: AssistantMessage) => AssistantMessage) => {
     setMessages((prev) => {
       const next = [...prev]
@@ -135,46 +174,61 @@ export default function ChatPage() {
     })
   }
 
-  const handleSend = async () => {
-    const q = input.trim()
-    if (!q || busy) return
-    setInput('')
-    textareaRef.current?.focus()
-
+  // Process the queue one run at a time (sequential — safe for the shared collector).
+  const pump = async () => {
+    if (runningRef.current) return
+    const q = queueRef.current.shift()
+    if (q === undefined) return
+    runningRef.current = true
+    setWorking(true)
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: q },
-      { role: 'assistant', content: '', tools: [], status: 'streaming' },
+      { role: 'assistant', content: '', tools: [], citations: [], activity: 'Thinking', status: 'streaming' },
     ])
-    setBusy(true)
-
     try {
       await streamChat(
-        { message: q, conversation_id: conversationId },
+        { message: q, conversation_id: convIdRef.current },
         {
-          onConversation: (id) => setConversationId(id),
-          onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
-          onToolCall: (call) => patchLast((m) => ({ ...m, tools: [...m.tools, call] })),
-          onFinished: (text) =>
-            patchLast((m) => ({ ...m, content: text || m.content, status: 'done' })),
-          onError: (message) =>
+          onConversation: (id) => { convIdRef.current = id; setConversationId(id) },
+          onToken: (t) => patchLast((m) => ({ ...m, content: m.content + t, activity: 'Writing' })),
+          onToolCall: (c) =>
+            patchLast((m) => ({ ...m, tools: [...m.tools, c], activity: TOOL_ACTIVITY[c.name] ?? 'Working' })),
+          onStatus: (label) => patchLast((m) => ({ ...m, activity: label })),
+          onCitations: (items) => patchLast((m) => ({ ...m, citations: items })),
+          onFinished: (txt) =>
+            patchLast((m) => ({ ...m, content: txt || m.content, status: 'done', activity: undefined })),
+          onError: (msg) =>
             patchLast((m) => ({
               ...m,
-              content: m.content + `\n\n> **Error:** ${message}`,
+              content: m.content + `\n\n> **Error:** ${msg}`,
               status: 'error',
+              activity: undefined,
             })),
         },
       )
-    } catch (err) {
+    } catch (e) {
       patchLast((m) => ({
         ...m,
-        content: m.content + `\n\n> **Error:** ${err instanceof Error ? err.message : 'request failed'}`,
+        content: m.content + `\n\n> **Error:** ${e instanceof Error ? e.message : 'request failed'}`,
         status: 'error',
+        activity: undefined,
       }))
     } finally {
-      setBusy(false)
-      patchLast((m) => (m.status === 'streaming' ? { ...m, status: 'done' } : m))
+      runningRef.current = false
+      patchLast((m) => (m.status === 'streaming' ? { ...m, status: 'done', activity: undefined } : m))
+      if (queueRef.current.length > 0) pump()
+      else setWorking(false)
     }
+  }
+
+  const handleSend = () => {
+    const q = input.trim()
+    if (!q) return
+    setInput('')
+    textareaRef.current?.focus()
+    setMessages((prev) => [...prev, { role: 'user', content: q }])
+    queueRef.current.push(q)
+    pump()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -198,7 +252,7 @@ export default function ChatPage() {
             <p className="text-xl font-light text-gray-600 mb-1">Research &amp; draft a whitepaper</p>
             <p className="text-sm text-gray-400 max-w-sm">
               e.g. <span className="italic">"Draft an introduction on CO₂ absorption in biobased solvents"</span> —
-              watch the agents search, verify, and write underneath.
+              watch it research and write underneath. You can keep typing while it works.
             </p>
           </div>
         )}
@@ -226,13 +280,13 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask Mentis to research or draft… (Enter to send, Shift+Enter for newline)"
+              placeholder="Ask Mentis to research or draft… (Enter to send — you can keep sending while it works)"
               rows={2}
               className="flex-1 resize-none border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-mentis-500 focus:border-transparent leading-relaxed"
             />
             <button
               onClick={handleSend}
-              disabled={busy || !input.trim()}
+              disabled={!input.trim()}
               aria-label="Send"
               className="shrink-0 w-10 h-10 flex items-center justify-center bg-mentis-600 text-white rounded-xl hover:bg-mentis-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
@@ -243,11 +297,10 @@ export default function ChatPage() {
               </svg>
             </button>
           </div>
-          {conversationId && (
-            <p className="text-xs text-gray-400 mt-1.5 text-right">
-              Conversation {conversationId.slice(0, 8)}
-            </p>
-          )}
+          <div className="flex justify-between mt-1.5 text-xs text-gray-400">
+            <span>{working ? 'Working — you can still send' : ''}{queueRef.current.length > 0 ? ` · ${queueRef.current.length} queued` : ''}</span>
+            {conversationId && <span>Conversation {conversationId.slice(0, 8)}</span>}
+          </div>
         </div>
       </div>
     </div>

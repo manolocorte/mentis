@@ -10,11 +10,15 @@ Event types emitted:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, AsyncIterator
 
 from strands import Agent
+
+from .citations import finalize_with_references
+from .sources import reset_run
 
 _THINK_BLOCK = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
 _OPEN = "<thinking>"
@@ -49,6 +53,7 @@ async def run_agent_sse(
     agent: Agent, prompt: str, sink: dict[str, Any] | None = None
 ) -> AsyncIterator[str]:
     yield _sse("run_started", {})
+    reset_run()
     seen_tools: set[str] = set()
     raw = ""
     emitted = 0
@@ -68,7 +73,11 @@ async def run_agent_sse(
                 if key not in seen_tools:
                     seen_tools.add(key)
                     yield _sse("tool_call", {"name": tu["name"], "input": tu.get("input", {})})
+        yield _sse("status", {"label": "Verifying citations"})
         final_text = _finalize(raw)
+        final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
+        if citations:
+            yield _sse("citations", {"items": citations})
         if sink is not None:
             sink["text"] = final_text
         yield _sse("run_finished", {"text": final_text})

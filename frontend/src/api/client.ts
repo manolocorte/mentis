@@ -49,6 +49,12 @@ function dispatchFrame(frame: string, cb: StreamCallbacks): void {
     case 'tool_call':
       cb.onToolCall?.({ name: data.name, input: data.input })
       break
+    case 'status':
+      cb.onStatus?.(data.label ?? '')
+      break
+    case 'citations':
+      cb.onCitations?.(data.items ?? [])
+      break
     case 'run_finished':
       cb.onFinished?.(data.text ?? '')
       break
