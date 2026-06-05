@@ -1,0 +1,15 @@
+# Scientific Python stack baked into the sandbox image so code runs need no
+# installs at execution time. Kept deliberately broad — these are the "essentials"
+# a researcher reaches for: arrays, dataframes, stats, plotting, symbolic math,
+# spreadsheet + image I/O, and thermophysical properties (CoolProp) for the
+# absorption-refrigeration / solvent domain.
+numpy
+pandas
+scipy
+matplotlib
+sympy
+openpyxl
+xlrd
+Pillow
+tabulate
+CoolProp
