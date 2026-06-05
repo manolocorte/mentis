@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { streamChat, downloadPdf } from '../api/client'
+import { streamChat, downloadDocument } from '../api/client'
 import type { Citation } from '../api/types'
 
 // ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ const TOOL_LABELS: Record<string, string> = {
 
 function ActivityLine({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-mentis-700 mb-2">
+    <div className="flex items-center gap-2 text-sm text-mentis-700 dark:text-mentis-300 mb-2">
       <span className="flex gap-0.5">
         <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.3s]" />
         <span className="w-1.5 h-1.5 rounded-full bg-mentis-500 animate-bounce [animation-delay:-0.15s]" />
@@ -96,17 +96,19 @@ function ToolTimeline({ tools }: { tools: ToolCall[] }) {
 
 function SourcesSummary({ citations }: { citations: Citation[] }) {
   if (!citations.length) return null
-  const supported = citations.filter((c) => c.supported === true).length
+  const backed = citations.filter((c) => c.supported === true).length
   const flagged = citations.filter((c) => c.supported === false)
+  const unverifiable = citations.filter((c) => c.supported !== true && c.supported !== false)
   return (
-    <p className="text-xs text-gray-500 mt-2">
-      <span className="text-mentis-700 font-medium">
-        ✓ {supported}/{citations.length} citations backed by their source
+    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+      <span className="text-mentis-700 dark:text-mentis-300 font-medium">
+        ✓ {backed}/{citations.length} backed by their source
       </span>
       {flagged.length > 0 && (
-        <span className="text-amber-600">
-          {' '}· ⚠ {flagged.length} may not support the claim ({flagged.map((c) => `[${c.n}]`).join(' ')})
-        </span>
+        <span className="text-amber-600"> · ⚠ {flagged.length} may not support the claim ({flagged.map((c) => `[${c.n}]`).join(' ')})</span>
+      )}
+      {unverifiable.length > 0 && (
+        <span> · {unverifiable.length} not auto-verified</span>
       )}
     </p>
   )
@@ -114,7 +116,7 @@ function SourcesSummary({ citations }: { citations: Citation[] }) {
 
 function AssistantBubble({ msg }: { msg: AssistantMessage }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm max-w-2xl w-full">
+    <div className="bg-white dark:bg-gray-800 dark:text-gray-100 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 shadow-sm max-w-2xl w-full">
       {msg.status === 'streaming' && <ActivityLine label={msg.activity || 'Working'} />}
       {msg.content && (
         <div className="assistant-prose">
@@ -124,23 +126,26 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
       <ToolTimeline tools={msg.tools} />
       {msg.status === 'done' && <SourcesSummary citations={msg.citations} />}
       {msg.status === 'done' && msg.content && (
-        <div className="mt-3 pt-2 border-t border-gray-100">
-          <button
-            onClick={() =>
-              downloadPdf(msg.content).catch((e) =>
-                alert('PDF export failed: ' + (e instanceof Error ? e.message : 'error')),
-              )
-            }
-            className="inline-flex items-center gap-1.5 text-xs text-mentis-700 hover:text-mentis-900"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Download PDF
-          </button>
+        <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex gap-4">
+          {(['pdf', 'docx'] as const).map((fmt) => (
+            <button
+              key={fmt}
+              onClick={() =>
+                downloadDocument(msg.content, fmt).catch((e) =>
+                  alert('Export failed: ' + (e instanceof Error ? e.message : 'error')),
+                )
+              }
+              className="inline-flex items-center gap-1.5 text-xs text-mentis-700 dark:text-mentis-300 hover:text-mentis-900 dark:hover:text-mentis-200"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              {fmt === 'pdf' ? 'Download PDF' : 'Download Word'}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -288,7 +293,7 @@ export default function ChatPage({
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 border-t border-gray-200 bg-white px-6 py-4">
+      <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
         <div className="max-w-3xl mx-auto">
           <div className="flex gap-2 items-end">
             <textarea
@@ -298,7 +303,7 @@ export default function ChatPage({
               onKeyDown={handleKeyDown}
               placeholder="Ask Mentis to research or draft… (Enter to send — you can keep sending while it works)"
               rows={2}
-              className="flex-1 resize-none border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-mentis-500 focus:border-transparent leading-relaxed"
+              className="flex-1 resize-none border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-mentis-500 focus:border-transparent leading-relaxed"
             />
             <button
               onClick={handleSend}

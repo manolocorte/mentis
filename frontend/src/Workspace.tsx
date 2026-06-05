@@ -2,19 +2,22 @@ import { useEffect, useState } from 'react'
 import ChatPage from './pages/ChatPage'
 import type { Message } from './pages/ChatPage'
 import {
+  compileProject,
   createConversation,
   createProject,
   deleteConversation,
   deleteProject,
   getConversationMessages,
   getLibrary,
+  getSourceProviders,
   listConversations,
   listProjects,
   renameConversation,
   renameProject,
   updateBrief,
+  updateProjectSources,
 } from './api/client'
-import type { Conversation, LibrarySource, Project, StoredMessage } from './api/types'
+import type { Conversation, LibrarySource, Project, SourceProvider, StoredMessage } from './api/types'
 
 function toMessages(stored: StoredMessage[]): Message[] {
   return stored.map((m) =>
@@ -37,16 +40,16 @@ function IconBtn({ label, onClick, children }: { label: string; onClick: (e: Rea
 function LibraryPanel({ sources }: { sources: LibrarySource[] }) {
   return (
     <div className="h-full overflow-y-auto px-8 py-6">
-      <h2 className="text-lg font-semibold text-gray-800 mb-1">Project library</h2>
+      <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">Project library</h2>
       <p className="text-sm text-gray-400 mb-4">DOI-verified sources gathered across this project.</p>
       {sources.length === 0 ? (
         <p className="text-sm text-gray-400">No sources yet — run a research/draft request.</p>
       ) : (
         <ul className="space-y-2 max-w-3xl">
           {sources.map((s, i) => (
-            <li key={i} className="bg-white border border-gray-200 rounded-lg px-4 py-3">
-              <p className="text-sm text-gray-800">
-                {s.doi ? <a href={`https://doi.org/${s.doi}`} target="_blank" rel="noopener noreferrer" className="text-mentis-700 hover:underline">{s.title}</a> : s.title}
+            <li key={i} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
+              <p className="text-sm text-gray-800 dark:text-gray-100">
+                {s.doi ? <a href={`https://doi.org/${s.doi}`} target="_blank" rel="noopener noreferrer" className="text-mentis-700 dark:text-mentis-300 hover:underline">{s.title}</a> : s.title}
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {s.authors} · {s.year} · {s.venue || '—'}
@@ -60,6 +63,30 @@ function LibraryPanel({ sources }: { sources: LibrarySource[] }) {
   )
 }
 
+function SourcesPanel({ project, providers, onToggle }: { project: Project; providers: SourceProvider[]; onToggle: (key: string) => void }) {
+  const enabled = new Set(project.sources || [])
+  return (
+    <div className="h-full overflow-y-auto px-8 py-6">
+      <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">Sources — {project.name}</h2>
+      <p className="text-sm text-gray-400 mb-4">Choose where the Researcher gathers sources for this project. Changes apply to the next message.</p>
+      <ul className="space-y-2 max-w-xl">
+        {providers.map((s) => (
+          <li key={s.key} className="flex items-center gap-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
+            <input type="checkbox" checked={enabled.has(s.key)} disabled={!s.available}
+              onChange={() => onToggle(s.key)} className="accent-mentis-600 w-4 h-4" />
+            <div className="flex-1">
+              <p className="text-sm text-gray-800 dark:text-gray-100">
+                {s.label}{s.free && <span className="text-xs text-mentis-600"> · free</span>}
+              </p>
+              {!s.available && <p className="text-xs text-amber-600">unavailable — no API key configured</p>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function Workspace() {
   const [projects, setProjects] = useState<Project[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -68,9 +95,18 @@ export default function Workspace() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [initialMessages, setInitialMessages] = useState<Message[]>([])
-  const [view, setView] = useState<'chat' | 'library'>('chat')
+  const [view, setView] = useState<'chat' | 'library' | 'sources'>('chat')
+  const [providers, setProviders] = useState<SourceProvider[]>([])
+  const [dark, setDark] = useState<boolean>(() => localStorage.getItem('mentis-theme') === 'dark')
+  const [compiling, setCompiling] = useState<string | null>(null)
 
   useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+    localStorage.setItem('mentis-theme', dark ? 'dark' : 'light')
+  }, [dark])
+
+  useEffect(() => {
+    getSourceProviders().then(({ sources }) => setProviders(sources))
     listProjects().then(async ({ projects }) => {
       setProjects(projects)
       if (projects.length) {
@@ -178,6 +214,31 @@ export default function Workspace() {
     await refreshProjects()
   }
 
+  function openSources(pid: string) {
+    setActiveProjectId(pid)
+    setView('sources')
+  }
+
+  async function doCompile(pid: string, format: 'pdf' | 'docx') {
+    setCompiling(pid)
+    try {
+      await compileProject(pid, format)
+    } catch (e) {
+      alert('Compile failed: ' + (e instanceof Error ? e.message : 'error'))
+    } finally {
+      setCompiling(null)
+    }
+  }
+
+  async function toggleSource(pid: string, key: string) {
+    const p = projects.find((x) => x.id === pid)
+    if (!p) return
+    const cur = new Set(p.sources || [])
+    cur.has(key) ? cur.delete(key) : cur.add(key)
+    await updateProjectSources(pid, Array.from(cur))
+    await refreshProjects()
+  }
+
   function updateConvTitle(cid: string, title: string) {
     setConvsByProject((m) => {
       const n: Record<string, Conversation[]> = {}
@@ -187,7 +248,7 @@ export default function Workspace() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       <aside className="w-64 bg-mentis-800 text-white flex flex-col shrink-0">
         <div className="px-5 py-4 border-b border-mentis-700 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -241,13 +302,32 @@ export default function Workspace() {
                         className={`hover:text-white ${view === 'library' && activeProjectId === p.id ? 'text-white' : ''}`}>
                         📚 Library ({(libByProject[p.id] || []).length})
                       </button>
+                      <button onClick={() => openSources(p.id)}
+                        className={`hover:text-white ${view === 'sources' && activeProjectId === p.id ? 'text-white' : ''}`}>
+                        ⚙ Sources
+                      </button>
                       <button onClick={() => editBrief(p.id)} className="hover:text-white">✎ Brief</button>
+                    </div>
+                    <div className="flex items-center gap-3 px-3 pb-1 text-xs text-mentis-300">
+                      <span className="text-mentis-400">Whitepaper →</span>
+                      <button onClick={() => doCompile(p.id, 'pdf')} disabled={compiling === p.id}
+                        className="hover:text-white disabled:opacity-50">
+                        {compiling === p.id ? '⏳ Compiling…' : '📄 PDF'}
+                      </button>
+                      <button onClick={() => doCompile(p.id, 'docx')} disabled={compiling === p.id}
+                        className="hover:text-white disabled:opacity-50">Word</button>
                     </div>
                   </div>
                 )}
               </div>
             )
           })}
+        </div>
+
+        <div className="px-3 py-2 border-t border-mentis-700">
+          <button onClick={() => setDark((d) => !d)} className="text-xs text-mentis-200 hover:text-white">
+            {dark ? '☀️ Light mode' : '🌙 Dark mode'}
+          </button>
         </div>
       </aside>
 
@@ -257,6 +337,12 @@ export default function Workspace() {
             <p className="text-lg font-light mb-2">Create a project to begin</p>
             <button onClick={newProject} className="px-4 py-2 bg-mentis-600 text-white rounded-lg text-sm hover:bg-mentis-700">New project</button>
           </div>
+        ) : view === 'sources' && activeProjectId && projects.find((p) => p.id === activeProjectId) ? (
+          <SourcesPanel
+            project={projects.find((p) => p.id === activeProjectId)!}
+            providers={providers}
+            onToggle={(key) => toggleSource(activeProjectId, key)}
+          />
         ) : view === 'library' && activeProjectId ? (
           <LibraryPanel sources={libByProject[activeProjectId] || []} />
         ) : activeConvId ? (

@@ -13,9 +13,23 @@ import logging
 
 from strands import Agent, tool
 
-from . import models, prompts, tools
+from . import models, prompts, sources, tools
 
 logger = logging.getLogger(__name__)
+
+# Registry of source providers (key -> tool). Add new providers here.
+SOURCE_TOOLS = {
+    "openalex": tools.search_literature,
+    "scopus": tools.scopus_search,
+    "arxiv": tools.search_arxiv,
+}
+
+# Metadata for the UI (key, label, whether it needs a configured key).
+AVAILABLE_SOURCES = [
+    {"key": "openalex", "label": "OpenAlex", "free": True},
+    {"key": "arxiv", "label": "arXiv (preprints)", "free": True},
+    {"key": "scopus", "label": "Scopus — Univ. Salamanca", "free": False, "requires": "scopus_api_key"},
+]
 
 
 @tool
@@ -24,11 +38,13 @@ def research(topic: str) -> str:
     numbered list of sources (with [n] citation indices) plus relevance notes. Call this
     before writing anything that needs grounding.
     """
+    active = sources.active_sources()
+    tool_list = [SOURCE_TOOLS[k] for k in active if k in SOURCE_TOOLS] or [tools.search_literature]
     researcher = Agent(
         model=models.worker_model(),
-        system_prompt=prompts.RESEARCHER_PROMPT,
+        system_prompt=prompts.RESEARCHER_PROMPT + f"\n\nEnabled sources this run: {', '.join(active)}.",
         callback_handler=None,
-        tools=[tools.search_literature, tools.scopus_search],
+        tools=tool_list,
     )
     return str(researcher(f"Topic: {topic}"))
 

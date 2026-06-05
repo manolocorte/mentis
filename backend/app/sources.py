@@ -44,6 +44,7 @@ class SourceCollector:
 
 
 _current = SourceCollector()
+_active_sources: list[str] = ["openalex", "scopus", "arxiv"]
 
 
 def reset_run() -> SourceCollector:
@@ -54,3 +55,13 @@ def reset_run() -> SourceCollector:
 
 def current() -> SourceCollector:
     return _current
+
+
+def set_active_sources(keys: list[str]) -> None:
+    """Set which source providers the Researcher may use for the current run."""
+    global _active_sources
+    _active_sources = list(keys) or ["openalex"]
+
+
+def active_sources() -> list[str]:
+    return _active_sources

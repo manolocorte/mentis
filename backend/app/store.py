@@ -7,6 +7,7 @@ swapped for DynamoDB at deploy time without touching callers.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 import uuid
@@ -14,9 +15,12 @@ from pathlib import Path
 
 from .config import get_settings
 
+_DEFAULT_SOURCES = ["openalex", "scopus", "arxiv"]
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, brief TEXT DEFAULT '',
+  sources TEXT DEFAULT '["openalex","scopus","arxiv"]',
   created_at REAL, updated_at REAL
 );
 CREATE TABLE IF NOT EXISTS conversations (
@@ -43,11 +47,28 @@ class Store:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            # migrate older DBs that predate the sources column
+            try:
+                c.execute(
+                    "ALTER TABLE projects ADD COLUMN sources TEXT "
+                    "DEFAULT '[\"openalex\",\"scopus\",\"arxiv\"]'"
+                )
+            except sqlite3.OperationalError:
+                pass
 
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self._path, timeout=10)
         c.row_factory = sqlite3.Row
         return c
+
+    @staticmethod
+    def _proj(row: sqlite3.Row) -> dict:
+        d = dict(row)
+        try:
+            d["sources"] = json.loads(d.get("sources") or "") or list(_DEFAULT_SOURCES)
+        except Exception:  # noqa: BLE001
+            d["sources"] = list(_DEFAULT_SOURCES)
+        return d
 
     # --- projects ---
     def create_project(self, name: str) -> dict:
@@ -57,17 +78,27 @@ class Store:
                 "INSERT INTO projects(id,name,brief,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (pid, name, "", now, now),
             )
-        return {"id": pid, "name": name, "brief": "", "created_at": now, "updated_at": now}
+        return {
+            "id": pid, "name": name, "brief": "", "sources": list(_DEFAULT_SOURCES),
+            "created_at": now, "updated_at": now,
+        }
 
     def list_projects(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
-        return [dict(r) for r in rows]
+        return [self._proj(r) for r in rows]
 
     def get_project(self, pid: str) -> dict | None:
         with self._conn() as c:
             r = c.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
-        return dict(r) if r else None
+        return self._proj(r) if r else None
+
+    def update_sources(self, pid: str, sources: list[str]) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE projects SET sources=?, updated_at=? WHERE id=?",
+                (json.dumps(list(sources)), time.time(), pid),
+            )
 
     def update_brief(self, pid: str, brief: str) -> None:
         with self._conn() as c:
@@ -147,6 +178,16 @@ class Store:
                 (conversation_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_project_drafts(self, pid: str, max_chars: int = 20000) -> str:
+        """Concatenate the assistant-written material across all of a project's
+        conversations (the drafted content the Editor assembles into the paper)."""
+        parts: list[str] = []
+        for conv in self.list_conversations(pid):
+            for m in self.get_messages(conv["id"], limit=100):
+                if m["role"] == "assistant" and m["content"].strip():
+                    parts.append(f"## from conversation: {conv['title']}\n{m['content']}")
+        return "\n\n".join(parts)[:max_chars]
 
     # --- per-project source library ---
     def add_library(self, project_id: str, sources: list[dict]) -> None:

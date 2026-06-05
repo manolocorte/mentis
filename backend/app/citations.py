@@ -42,14 +42,22 @@ def _cited_numbers(text: str) -> list[int]:
     return sorted(nums)
 
 
-def _verify_doi(doi: str) -> bool:
+def _resolve(doi: str) -> tuple[bool, str]:
+    """Resolve a DOI via OpenAlex; return (resolves, abstract). Lets us both verify the DOI
+    and back-fill abstracts for sources (e.g. Scopus) that didn't include one."""
     if not doi:
-        return False
+        return False, ""
     try:
         r = httpx.get(f"https://api.openalex.org/works/doi:{doi}", headers=_UA, timeout=12)
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False, ""
+        idx = r.json().get("abstract_inverted_index")
+        if not idx:
+            return True, ""
+        pos = sorted((loc, w) for w, locs in idx.items() for loc in locs)
+        return True, " ".join(w for _, w in pos)[:600]
     except Exception:  # noqa: BLE001
-        return False
+        return False, ""
 
 
 def _strip_model_refs(text: str) -> str:
@@ -88,7 +96,10 @@ def finalize_with_references(text: str) -> tuple[str, list[dict]]:
 
     pairs = [(n, coll.items[n - 1]) for n in cited if 1 <= n <= len(coll.items)]
     for _, s in pairs:
-        s.verified = _verify_doi(s.doi)
+        ok, abstract = _resolve(s.doi)
+        s.verified = ok
+        if not s.abstract and abstract:  # back-fill abstracts (e.g. Scopus) so the Validator can check
+            s.abstract = abstract
     verdicts = _check_support(body, pairs)
 
     records: list[dict] = []
@@ -101,6 +112,8 @@ def finalize_with_references(text: str) -> tuple[str, list[dict]]:
             doi_txt = f" https://doi.org/{s.doi}" if s.doi else ""
             if supp is False:
                 flag = "  *[⚠ source may not support this claim]*"
+            elif supp is None:
+                flag = "  *[not auto-verified — no abstract available]*"
             elif not s.verified:
                 flag = "  *[DOI unverified]*" if s.doi else "  *[no DOI]*"
             else:

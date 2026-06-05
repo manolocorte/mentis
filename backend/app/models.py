@@ -66,3 +66,11 @@ def draft_model() -> BedrockModel:
 
 def verify_model() -> BedrockModel:
     return _model(get_settings().model_verify, temperature=0.0, max_tokens=800)
+
+
+def editor_model() -> BedrockModel:
+    return _model(get_settings().model_draft, temperature=0.3, max_tokens=6000)  # Claude, full paper
+
+
+def editor_fallback_model() -> BedrockModel:
+    return _model(get_settings().model_supervisor, temperature=0.3, max_tokens=4096)  # Nova fallback

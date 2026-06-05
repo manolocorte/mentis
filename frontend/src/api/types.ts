@@ -30,8 +30,16 @@ export interface Project {
   id: string
   name: string
   brief: string
+  sources: string[]
   created_at: number
   updated_at: number
+}
+
+export interface SourceProvider {
+  key: string
+  label: string
+  free: boolean
+  available: boolean
 }
 
 export interface Conversation {

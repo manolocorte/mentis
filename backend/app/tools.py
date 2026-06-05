@@ -9,6 +9,7 @@ and DOI-verified afterwards — the numbers the model sees are stable global ind
 from __future__ import annotations
 
 import io
+import re
 
 import httpx
 from strands import tool
@@ -86,7 +87,13 @@ def scopus_search(query: str, limit: int = 8) -> str:
     if not s.scopus_api_key:
         return "Scopus is not configured (no API key). Use search_literature instead."
     headers = {"X-ELS-APIKey": s.scopus_api_key, "Accept": "application/json"}
-    params = {"query": query, "count": min(max(limit, 1), 25)}
+    if s.scopus_insttoken:  # institutional token → full access off-campus
+        headers["X-ELS-Insttoken"] = s.scopus_insttoken
+    # Wrap bare keyword queries in Scopus field syntax for precision (title/abstract/keywords).
+    q = query.strip()
+    if not re.search(r"\b(TITLE-ABS-KEY|TITLE|ABS|KEY|AUTH|AFFIL|DOI|PUBYEAR|SRCTITLE)\b", q, re.I):
+        q = f"TITLE-ABS-KEY({q})"
+    params = {"query": q, "count": min(max(limit, 1), 25)}
     try:
         r = httpx.get(
             f"{s.scopus_base_url}/search/scopus", params=params, headers=headers, timeout=25
@@ -106,8 +113,50 @@ def scopus_search(query: str, limit: int = 8) -> str:
         year = (e.get("prism:coverDate", "") or "")[:4] or "n.d."
         venue = e.get("prism:publicationName", "")
         doi = e.get("prism:doi", "") or ""
-        idx = coll.add(Source(title=title, authors=authors, year=year, venue=venue, doi=doi))
+        abstract = e.get("dc:description", "") or ""
+        idx = coll.add(
+            Source(title=title, authors=authors, year=year, venue=venue, doi=doi, abstract=abstract)
+        )
         lines.append(f"[{idx}] {title} — {authors} ({year}). {venue}. DOI: {doi or 'n/a'}")
+    return "\n".join(lines)
+
+
+@tool
+def search_arxiv(query: str, limit: int = 8) -> str:
+    """Search arXiv preprints. Returns numbered sources whose [n] indices resolve to real
+    references (abstracts included). Good for recent/preprint work.
+    """
+    import xml.etree.ElementTree as ET
+
+    params = {"search_query": f"all:{query}", "max_results": min(max(limit, 1), 25), "sortBy": "relevance"}
+    try:
+        r = httpx.get("https://export.arxiv.org/api/query", params=params, headers=_ua(), timeout=25)
+        r.raise_for_status()
+        root = ET.fromstring(r.text)
+    except Exception as e:  # noqa: BLE001
+        return f"arXiv search failed: {e}"
+    ns = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    entries = root.findall("a:entry", ns)
+    if not entries:
+        return f"No arXiv results for: {query}"
+
+    coll = current()
+    lines: list[str] = []
+    for e in entries:
+        title = (e.findtext("a:title", default="", namespaces=ns) or "Untitled").strip().replace("\n", " ")
+        summary = (e.findtext("a:summary", default="", namespaces=ns) or "").strip().replace("\n", " ")[:600]
+        authors = ", ".join(
+            (a.findtext("a:name", default="", namespaces=ns) or "")
+            for a in e.findall("a:author", ns)[:4]
+        )
+        year = (e.findtext("a:published", default="", namespaces=ns) or "")[:4] or "n.d."
+        doi = (e.findtext("arxiv:doi", default="", namespaces=ns) or "").strip()
+        url = (e.findtext("a:id", default="", namespaces=ns) or "").strip()
+        idx = coll.add(
+            Source(title=title, authors=authors, year=year, venue="arXiv", doi=doi, abstract=summary)
+        )
+        ref = f"DOI: {doi}" if doi else url
+        lines.append(f"[{idx}] {title} — {authors} ({year}). arXiv. {ref}\n    {summary}")
     return "\n".join(lines)
 
 

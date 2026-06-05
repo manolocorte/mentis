@@ -3,6 +3,7 @@ import type {
   HealthResponse,
   LibrarySource,
   Project,
+  SourceProvider,
   StoredMessage,
   StreamCallbacks,
 } from './types'
@@ -81,6 +82,32 @@ export function getConversationMessages(
 
 export function getLibrary(projectId: string): Promise<{ sources: LibrarySource[] }> {
   return jreq(`/projects/${projectId}/library`)
+}
+
+export function getSourceProviders(): Promise<{ sources: SourceProvider[] }> {
+  return jreq('/sources')
+}
+
+export async function compileProject(projectId: string, format: 'pdf' | 'docx'): Promise<void> {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/compile`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ format }),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `whitepaper.${format}`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export function updateProjectSources(projectId: string, sources: string[]): Promise<Project> {
+  return jreq(`/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ sources }) })
 }
 
 // ---------------------------------------------------------------------------
@@ -163,18 +190,22 @@ export async function streamChat(
 // PDF export
 // ---------------------------------------------------------------------------
 
-export async function downloadPdf(markdown: string, title?: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/export/pdf`, {
+export async function downloadDocument(
+  markdown: string,
+  format: 'pdf' | 'docx',
+  title?: string,
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/export`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ markdown, title }),
+    body: JSON.stringify({ markdown, format, title }),
   })
   if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'mentis-whitepaper.pdf'
+  a.download = `mentis-whitepaper.${format}`
   document.body.appendChild(a)
   a.click()
   a.remove()

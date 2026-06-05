@@ -24,3 +24,10 @@ html {
 .assistant-prose pre code { @apply bg-transparent p-0; }
 .assistant-prose blockquote { @apply border-l-4 border-mentis-300 pl-3 italic text-gray-600 text-sm; }
 .assistant-prose a { @apply text-mentis-700 underline; }
+
+/* Dark mode */
+html.dark { background-color: #111827; }
+.dark .assistant-prose code { @apply bg-gray-700 text-mentis-200; }
+.dark .assistant-prose pre { @apply bg-gray-900; }
+.dark .assistant-prose blockquote { @apply text-gray-300 border-mentis-600; }
+.dark .assistant-prose a { @apply text-mentis-300; }

@@ -6,16 +6,20 @@ Lift to AgentCore later: swap FastAPI for BedrockAgentCoreApp + @app.entrypoint.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .agents import build_supervisor
+from .agents import AVAILABLE_SOURCES, build_supervisor
+from .compiler import compile_whitepaper
 from .config import get_settings
-from .export import build_pdf
+from .export import build_docx, build_pdf
+from .sources import set_active_sources
 from .store import get_store
 from .streaming import run_agent_sse
 
@@ -41,6 +45,11 @@ class ChatRequest(BaseModel):
 class ExportRequest(BaseModel):
     markdown: str
     title: str | None = None
+    format: str = "pdf"  # "pdf" | "docx"
+
+
+class CompileRequest(BaseModel):
+    format: str = "pdf"  # "pdf" | "docx"
 
 
 class ProjectCreate(BaseModel):
@@ -50,6 +59,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     brief: str | None = None
+    sources: list[str] | None = None
 
 
 class ConversationCreate(BaseModel):
@@ -80,6 +90,19 @@ def _build_prompt(project: dict | None, history: list[dict], message: str) -> st
         parts.append("CONVERSATION SO FAR:\n" + convo)
     parts.append("CURRENT REQUEST:\n" + message)
     return "\n\n".join(parts)
+
+
+@app.get("/sources")
+async def list_sources(x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    out = []
+    for s in AVAILABLE_SOURCES:
+        req = s.get("requires")
+        available = True if not req else bool(getattr(settings, req, None))
+        out.append(
+            {"key": s["key"], "label": s["label"], "free": s.get("free", False), "available": available}
+        )
+    return {"sources": out}
 
 
 @app.get("/health")
@@ -125,6 +148,8 @@ async def update_project(pid: str, req: ProjectUpdate, x_api_key: str | None = H
         store.rename_project(pid, req.name.strip() or "Untitled project")
     if req.brief is not None:
         store.update_brief(pid, req.brief)
+    if req.sources is not None:
+        store.update_sources(pid, req.sources)
     return store.get_project(pid)
 
 
@@ -196,6 +221,7 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
     else:
         project = store.get_project(conv["project_id"])
 
+    set_active_sources(project.get("sources") or ["openalex"])
     history = store.get_messages(conv["id"], limit=settings.history_limit)
     # Auto-title the conversation from its first message.
     title = conv.get("title")
@@ -227,12 +253,47 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.post("/export/pdf")
-async def export_pdf(req: ExportRequest, x_api_key: str | None = Header(default=None)):
+@app.post("/export")
+async def export_doc(req: ExportRequest, x_api_key: str | None = Header(default=None)):
     _check_auth(x_api_key)
-    pdf = build_pdf(req.markdown, req.title)
+    if req.format == "docx":
+        data = build_docx(req.markdown, req.title)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        filename = "mentis-whitepaper.docx"
+    else:
+        data = build_pdf(req.markdown, req.title)
+        media = "application/pdf"
+        filename = "mentis-whitepaper.pdf"
     return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="mentis-whitepaper.pdf"'},
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/projects/{pid}/compile")
+async def compile_project(pid: str, req: CompileRequest, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    project = store.get_project(pid)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    paper_md = await asyncio.to_thread(
+        compile_whitepaper,
+        project.get("brief", ""),
+        store.get_project_drafts(pid),
+        store.get_library(pid),
+    )
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", project["name"])[:60] or "whitepaper"
+    if req.format == "docx":
+        data = build_docx(paper_md, project["name"])
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        filename = f"{safe}.docx"
+    else:
+        data = build_pdf(paper_md, project["name"])
+        media = "application/pdf"
+        filename = f"{safe}.pdf"
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
