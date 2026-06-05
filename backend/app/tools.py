@@ -66,8 +66,10 @@ def search_literature(query: str, limit: int = 8) -> str:
         doi = (w.get("doi") or "").replace("https://doi.org/", "")
         year = str(w.get("publication_year") or "n.d.")
         title = w.get("title", "Untitled")
-        idx = coll.add(Source(title=title, authors=authors, year=year, venue=venue, doi=doi))
         snippet = _abstract_from_inverted(w.get("abstract_inverted_index"))
+        idx = coll.add(
+            Source(title=title, authors=authors, year=year, venue=venue, doi=doi, abstract=snippet)
+        )
         lines.append(
             f"[{idx}] {title} — {authors} ({year}). {venue}. DOI: {doi or 'n/a'}\n    {snippet}"
         )

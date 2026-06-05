@@ -26,21 +26,23 @@ interface AssistantMessage {
   status: 'streaming' | 'done' | 'error'
 }
 
-type Message = UserMessage | AssistantMessage
+export type Message = UserMessage | AssistantMessage
 
 // ---------------------------------------------------------------------------
 // Activity labels (Claude Code-style "what it's doing now")
 // ---------------------------------------------------------------------------
 
 const TOOL_ACTIVITY: Record<string, string> = {
+  research: 'Researching sources',
   search_literature: 'Researching the literature',
   scopus_search: 'Searching Scopus',
   fetch_pdf_text: 'Reading a paper',
   verify_doi: 'Verifying a DOI',
-  draft_section: 'Drafting the section',
+  draft_section: 'Drafting',
 }
 
 const TOOL_LABELS: Record<string, string> = {
+  research: 'Researched & curated sources',
   search_literature: 'Searched literature (OpenAlex)',
   scopus_search: 'Searched Scopus',
   fetch_pdf_text: 'Read PDF',
@@ -94,13 +96,17 @@ function ToolTimeline({ tools }: { tools: ToolCall[] }) {
 
 function SourcesSummary({ citations }: { citations: Citation[] }) {
   if (!citations.length) return null
-  const verified = citations.filter((c) => c.verified).length
-  const flagged = citations.filter((c) => !c.verified)
+  const supported = citations.filter((c) => c.supported === true).length
+  const flagged = citations.filter((c) => c.supported === false)
   return (
     <p className="text-xs text-gray-500 mt-2">
-      <span className="text-mentis-700 font-medium">✓ {verified}/{citations.length} sources verified</span>
+      <span className="text-mentis-700 font-medium">
+        ✓ {supported}/{citations.length} citations backed by their source
+      </span>
       {flagged.length > 0 && (
-        <span className="text-amber-600"> · {flagged.length} unverified ({flagged.map((c) => `[${c.n}]`).join(' ')})</span>
+        <span className="text-amber-600">
+          {' '}· ⚠ {flagged.length} may not support the claim ({flagged.map((c) => `[${c.n}]`).join(' ')})
+        </span>
       )}
     </p>
   )
@@ -145,12 +151,19 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
 // Page
 // ---------------------------------------------------------------------------
 
-export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([])
+export default function ChatPage({
+  conversationId,
+  initialMessages,
+  onTitle,
+}: {
+  conversationId: string
+  initialMessages: Message[]
+  onTitle?: (conversationId: string, title: string) => void
+}) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
   const [working, setWorking] = useState(false)
-  const [conversationId, setConversationId] = useState<string | undefined>()
-  const convIdRef = useRef<string | undefined>(undefined)
+  const convIdRef = useRef<string>(conversationId)
   const runningRef = useRef(false)
   const queueRef = useRef<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -189,7 +202,10 @@ export default function ChatPage() {
       await streamChat(
         { message: q, conversation_id: convIdRef.current },
         {
-          onConversation: (id) => { convIdRef.current = id; setConversationId(id) },
+          onConversation: (info) => {
+            convIdRef.current = info.conversationId
+            if (info.title) onTitle?.(info.conversationId, info.title)
+          },
           onToken: (t) => patchLast((m) => ({ ...m, content: m.content + t, activity: 'Writing' })),
           onToolCall: (c) =>
             patchLast((m) => ({ ...m, tools: [...m.tools, c], activity: TOOL_ACTIVITY[c.name] ?? 'Working' })),
@@ -297,9 +313,9 @@ export default function ChatPage() {
               </svg>
             </button>
           </div>
-          <div className="flex justify-between mt-1.5 text-xs text-gray-400">
-            <span>{working ? 'Working — you can still send' : ''}{queueRef.current.length > 0 ? ` · ${queueRef.current.length} queued` : ''}</span>
-            {conversationId && <span>Conversation {conversationId.slice(0, 8)}</span>}
+          <div className="mt-1.5 text-xs text-gray-400">
+            {working ? 'Working — you can still send' : ''}
+            {queueRef.current.length > 0 ? ` · ${queueRef.current.length} queued` : ''}
           </div>
         </div>
       </div>

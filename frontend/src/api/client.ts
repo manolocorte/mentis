@@ -1,4 +1,11 @@
-import type { HealthResponse, StreamCallbacks } from './types'
+import type {
+  Conversation,
+  HealthResponse,
+  LibrarySource,
+  Project,
+  StoredMessage,
+  StreamCallbacks,
+} from './types'
 
 // ---------------------------------------------------------------------------
 // Config — read once from env at module load time
@@ -15,10 +22,65 @@ function headers(extra?: Record<string, string>): HeadersInit {
   return { ...h, ...extra }
 }
 
-export async function getHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${BASE_URL}/health`, { headers: headers() })
+async function jreq<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: headers(init?.headers as Record<string, string>) })
   if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
-  return res.json() as Promise<HealthResponse>
+  return res.json() as Promise<T>
+}
+
+export function getHealth(): Promise<HealthResponse> {
+  return jreq<HealthResponse>('/health')
+}
+
+// --- projects / conversations / library ---
+
+export function listProjects(): Promise<{ projects: Project[] }> {
+  return jreq('/projects')
+}
+
+export function createProject(name: string): Promise<Project> {
+  return jreq('/projects', { method: 'POST', body: JSON.stringify({ name }) })
+}
+
+export function updateBrief(projectId: string, brief: string): Promise<Project> {
+  return jreq(`/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ brief }) })
+}
+
+export function renameProject(projectId: string, name: string): Promise<Project> {
+  return jreq(`/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+}
+
+export function deleteProject(projectId: string): Promise<{ ok: boolean }> {
+  return jreq(`/projects/${projectId}`, { method: 'DELETE' })
+}
+
+export function renameConversation(conversationId: string, title: string): Promise<Conversation> {
+  return jreq(`/conversations/${conversationId}`, { method: 'PATCH', body: JSON.stringify({ title }) })
+}
+
+export function deleteConversation(conversationId: string): Promise<{ ok: boolean }> {
+  return jreq(`/conversations/${conversationId}`, { method: 'DELETE' })
+}
+
+export function listConversations(projectId: string): Promise<{ conversations: Conversation[] }> {
+  return jreq(`/projects/${projectId}/conversations`)
+}
+
+export function createConversation(projectId: string, title?: string): Promise<Conversation> {
+  return jreq(`/projects/${projectId}/conversations`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  })
+}
+
+export function getConversationMessages(
+  conversationId: string,
+): Promise<{ id: string; title: string; messages: StoredMessage[] }> {
+  return jreq(`/conversations/${conversationId}`)
+}
+
+export function getLibrary(projectId: string): Promise<{ sources: LibrarySource[] }> {
+  return jreq(`/projects/${projectId}/library`)
 }
 
 // ---------------------------------------------------------------------------
@@ -41,7 +103,11 @@ function dispatchFrame(frame: string, cb: StreamCallbacks): void {
   }
   switch (event) {
     case 'conversation':
-      cb.onConversation?.(data.conversation_id)
+      cb.onConversation?.({
+        conversationId: data.conversation_id,
+        projectId: data.project_id,
+        title: data.title,
+      })
       break
     case 'token':
       cb.onToken?.(data.text ?? '')

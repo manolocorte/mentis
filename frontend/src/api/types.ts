@@ -22,11 +22,42 @@ export interface Citation {
   year?: string
   doi?: string
   verified: boolean
+  supported?: boolean | null
   unsupported?: boolean
 }
 
+export interface Project {
+  id: string
+  name: string
+  brief: string
+  created_at: number
+  updated_at: number
+}
+
+export interface Conversation {
+  id: string
+  project_id: string
+  title: string
+  created_at: number
+}
+
+export interface StoredMessage {
+  role: 'user' | 'assistant'
+  content: string
+  created_at: number
+}
+
+export interface LibrarySource {
+  doi: string
+  title: string
+  authors: string
+  year: string
+  venue: string
+  verified: number
+}
+
 export interface StreamCallbacks {
-  onConversation?: (id: string) => void
+  onConversation?: (info: { conversationId: string; projectId?: string; title?: string }) => void
   onToken?: (text: string) => void
   onToolCall?: (call: ToolCallEvent) => void
   onStatus?: (label: string) => void

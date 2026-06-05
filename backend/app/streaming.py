@@ -73,13 +73,14 @@ async def run_agent_sse(
                 if key not in seen_tools:
                     seen_tools.add(key)
                     yield _sse("tool_call", {"name": tu["name"], "input": tu.get("input", {})})
-        yield _sse("status", {"label": "Verifying citations"})
+        yield _sse("status", {"label": "Checking sources & claims"})
         final_text = _finalize(raw)
         final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
         if citations:
             yield _sse("citations", {"items": citations})
         if sink is not None:
             sink["text"] = final_text
+            sink["citations"] = citations
         yield _sse("run_finished", {"text": final_text})
     except Exception as e:  # noqa: BLE001
         yield _sse("error", {"message": str(e)})

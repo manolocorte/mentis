@@ -19,7 +19,9 @@ class Source:
     year: str
     venue: str
     doi: str  # cleaned (no https://doi.org/ prefix); may be ""
-    verified: bool = False
+    abstract: str = ""        # used by the Validator to check claim support
+    verified: bool = False    # DOI resolves
+    supported: bool | None = None  # Validator: does the source back the claim it's cited for
 
 
 @dataclass

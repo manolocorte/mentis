@@ -1,9 +1,12 @@
-"""FastAPI app — SSE streaming chat over the Strands supervisor.
+"""FastAPI app — SSE streaming chat over the Strands supervisor, with projects,
+conversations, a per-project source library, and conversation memory.
 
 Run locally:  uvicorn app.server:app --reload --port 8080   (from the backend/ dir)
-Lift to AgentCore later: swap FastAPI for BedrockAgentCoreApp + @app.entrypoint (~10 lines).
+Lift to AgentCore later: swap FastAPI for BedrockAgentCoreApp + @app.entrypoint.
 """
 from __future__ import annotations
+
+import json
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +22,7 @@ from .streaming import run_agent_sse
 settings = get_settings()
 store = get_store()
 
-app = FastAPI(title="Mentis-lean", version="0.1.0")
+app = FastAPI(title="Mentis-lean", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.allowed_origins.split(",")],
@@ -29,6 +32,7 @@ app.add_middleware(
 )
 
 
+# --- schemas ---
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
@@ -39,9 +43,43 @@ class ExportRequest(BaseModel):
     title: str | None = None
 
 
+class ProjectCreate(BaseModel):
+    name: str
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    brief: str | None = None
+
+
+class ConversationCreate(BaseModel):
+    title: str | None = None
+
+
+class ConversationUpdate(BaseModel):
+    title: str
+
+
 def _check_auth(x_api_key: str | None) -> None:
     if settings.api_key and x_api_key != settings.api_key:
         raise HTTPException(status_code=401, detail="invalid api key")
+
+
+def _derive_title(message: str) -> str:
+    t = " ".join(message.strip().split())
+    return (t[:48].rstrip() + "…") if len(t) > 48 else t
+
+
+def _build_prompt(project: dict | None, history: list[dict], message: str) -> str:
+    """Compose the agent prompt with project brief + recent history (continuity)."""
+    parts: list[str] = []
+    if project and project.get("brief"):
+        parts.append("PROJECT BRIEF (the paper you are helping with):\n" + project["brief"])
+    if history:
+        convo = "\n".join(f"{m['role']}: {m['content'][:600]}" for m in history)
+        parts.append("CONVERSATION SO FAR:\n" + convo)
+    parts.append("CURRENT REQUEST:\n" + message)
+    return "\n\n".join(parts)
 
 
 @app.get("/health")
@@ -55,21 +93,136 @@ async def health() -> dict:
     }
 
 
+# --- projects ---
+@app.get("/projects")
+async def list_projects(x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    return {"projects": store.list_projects()}
+
+
+@app.post("/projects")
+async def create_project(req: ProjectCreate, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    name = req.name.strip() or "Untitled project"
+    return store.create_project(name)
+
+
+@app.get("/projects/{pid}")
+async def get_project(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    project = store.get_project(pid)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    return project
+
+
+@app.patch("/projects/{pid}")
+async def update_project(pid: str, req: ProjectUpdate, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    if not store.get_project(pid):
+        raise HTTPException(status_code=404, detail="project not found")
+    if req.name is not None:
+        store.rename_project(pid, req.name.strip() or "Untitled project")
+    if req.brief is not None:
+        store.update_brief(pid, req.brief)
+    return store.get_project(pid)
+
+
+@app.delete("/projects/{pid}")
+async def delete_project(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    store.delete_project(pid)
+    return {"ok": True}
+
+
+@app.get("/projects/{pid}/conversations")
+async def list_conversations(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    return {"conversations": store.list_conversations(pid)}
+
+
+@app.post("/projects/{pid}/conversations")
+async def create_conversation(
+    pid: str, req: ConversationCreate, x_api_key: str | None = Header(default=None)
+):
+    _check_auth(x_api_key)
+    if not store.get_project(pid):
+        raise HTTPException(status_code=404, detail="project not found")
+    return store.create_conversation(pid, (req.title or "New conversation").strip())
+
+
+@app.get("/projects/{pid}/library")
+async def get_library(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    return {"sources": store.get_library(pid)}
+
+
+@app.get("/conversations/{cid}")
+async def get_conversation(cid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    conv = store.get_conversation(cid)
+    if not conv:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {**conv, "messages": store.get_messages(cid, limit=200)}
+
+
+@app.patch("/conversations/{cid}")
+async def rename_conversation(
+    cid: str, req: ConversationUpdate, x_api_key: str | None = Header(default=None)
+):
+    _check_auth(x_api_key)
+    if not store.get_conversation(cid):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    store.rename_conversation(cid, req.title.strip() or "New conversation")
+    return store.get_conversation(cid)
+
+
+@app.delete("/conversations/{cid}")
+async def delete_conversation(cid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    store.delete_conversation(cid)
+    return {"ok": True}
+
+
+# --- chat ---
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=None)):
     _check_auth(x_api_key)
-    conversation_id = req.conversation_id or store.new_conversation()
-    store.append(conversation_id, "user", req.message)
+    conv = store.get_conversation(req.conversation_id) if req.conversation_id else None
+    if conv is None:
+        # Bootstrap a default project + conversation if the client didn't pick one.
+        project = store.create_project("Default project")
+        conv = store.create_conversation(project["id"], "New conversation")
+    else:
+        project = store.get_project(conv["project_id"])
+
+    history = store.get_messages(conv["id"], limit=settings.history_limit)
+    # Auto-title the conversation from its first message.
+    title = conv.get("title")
+    if (title in (None, "", "New conversation")) and not history:
+        derived = _derive_title(req.message)
+        if derived:
+            store.rename_conversation(conv["id"], derived)
+            title = derived
+    store.add_message(conv["id"], "user", req.message)
+    prompt = _build_prompt(project, history, req.message)
     agent = build_supervisor()
+    cid, pid = conv["id"], project["id"]
 
     async def gen():
-        # Tell the client its conversation id up front.
-        yield f'event: conversation\ndata: {{"conversation_id": "{conversation_id}"}}\n\n'
+        yield "event: conversation\ndata: " + json.dumps(
+            {"conversation_id": cid, "project_id": pid, "title": title}
+        ) + "\n\n"
         sink: dict = {}
-        async for frame in run_agent_sse(agent, req.message, sink):
+        async for frame in run_agent_sse(agent, prompt, sink):
             yield frame
         if sink.get("text"):
-            store.append(conversation_id, "assistant", sink["text"])
+            store.add_message(cid, "assistant", sink["text"])
+        if sink.get("citations"):
+            verified = [c for c in sink["citations"] if c.get("verified")]
+            if verified:
+                store.add_library(pid, verified)
+        store.touch_project(pid)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

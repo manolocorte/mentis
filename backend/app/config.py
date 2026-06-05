@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     api_key: str | None = None
     conversation_store: str = "local"        # "local" | "dynamo"
     dynamo_table: str = "mentis"
-    store_path: str = ".data/conversations.json"
+    store_path: str = ".data/mentis.db"
+    history_limit: int = 12                   # recent messages fed to the agent for continuity
     allowed_origins: str = "*"
     max_tool_steps: int = 8
 
