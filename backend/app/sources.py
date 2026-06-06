@@ -2,14 +2,14 @@
 References list can be built deterministically from retrieved metadata instead of
 whatever the model writes from memory.
 
-Run state is held in contextvars, so concurrent runs (e.g. a background job and an
-interactive request) are isolated from each other rather than sharing a process
-global. Each run calls reset_run()/set_active_sources() in its own context.
+Run state is process-global (shared across the threads Strands runs tools in).
+Concurrent agent runs are serialized by a lock in server.py, so one run's state
+never overlaps another's. (contextvars do NOT work here: Strands executes tools in
+worker threads that don't inherit the caller's context.)
 """
 from __future__ import annotations
 
 import threading
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 
@@ -44,29 +44,25 @@ class SourceCollector:
             return idx
 
 
-_current: ContextVar[SourceCollector] = ContextVar("mentis_collector")
-_active_sources: ContextVar[list[str]] = ContextVar(
-    "mentis_active_sources", default=["openalex", "scopus", "arxiv"]
-)
+_current = SourceCollector()
+_active_sources: list[str] = ["openalex", "scopus", "arxiv"]
 
 
 def reset_run() -> SourceCollector:
-    c = SourceCollector()
-    _current.set(c)
-    return c
+    global _current
+    _current = SourceCollector()
+    return _current
 
 
 def current() -> SourceCollector:
-    try:
-        return _current.get()
-    except LookupError:
-        return reset_run()
+    return _current
 
 
 def set_active_sources(keys: list[str]) -> None:
     """Set which source providers the Researcher may use for the current run."""
-    _active_sources.set(list(keys) or ["openalex"])
+    global _active_sources
+    _active_sources = list(keys) or ["openalex"]
 
 
 def active_sources() -> list[str]:
-    return _active_sources.get()
+    return _active_sources

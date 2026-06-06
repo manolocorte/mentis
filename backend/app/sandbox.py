@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import subprocess
 import uuid
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,9 +25,11 @@ from .config import get_settings
 # Each project gets its own workspace directory (the local stand-in for an S3
 # prefix). Uploaded files live there and produced files land there, so work
 # persists per project across conversations. The server sets the active
-# workspace per request; tools read it via current_workspace().
+# workspace per run (under a lock); tools read it via current_workspace().
+# Module-global (not contextvar): Strands runs tools in threads that don't
+# inherit contextvars, so the global is what the tool actually sees.
 
-_current_workspace: ContextVar[Path | None] = ContextVar("mentis_workspace", default=None)
+_current_workspace: Path | None = None
 
 
 def workspace_root() -> Path:
@@ -40,11 +41,12 @@ def workspace_for(project_id: str) -> Path:
 
 
 def set_workspace(path: Path | str | None) -> None:
-    _current_workspace.set(Path(path) if path is not None else None)
+    global _current_workspace
+    _current_workspace = Path(path) if path is not None else None
 
 
 def current_workspace() -> Path:
-    ws = _current_workspace.get() or workspace_root() / "_scratch"
+    ws = _current_workspace if _current_workspace is not None else workspace_root() / "_scratch"
     ws.mkdir(parents=True, exist_ok=True)
     return ws
 
@@ -54,25 +56,22 @@ def current_workspace() -> Path:
 # surface them (figures, processed spreadsheets) to the UI and the export.
 # Reset at the start of each agent run.
 
-_artifacts: ContextVar[list[str] | None] = ContextVar("mentis_artifacts", default=None)
+_artifacts: list[str] = []
 
 
 def reset_artifacts() -> None:
-    _artifacts.set([])
+    global _artifacts
+    _artifacts = []
 
 
 def record_artifacts(files: list[str]) -> None:
-    cur = _artifacts.get()
-    if cur is None:
-        cur = []
-        _artifacts.set(cur)
     for f in files:
-        if f not in cur:
-            cur.append(f)
+        if f not in _artifacts:
+            _artifacts.append(f)
 
 
 def produced_artifacts() -> list[str]:
-    return list(_artifacts.get() or [])
+    return list(_artifacts)
 
 
 @dataclass
