@@ -3,6 +3,7 @@ import type {
   HealthResponse,
   LibrarySource,
   Project,
+  ProjectFile,
   SourceProvider,
   StoredMessage,
   StreamCallbacks,
@@ -16,6 +17,8 @@ const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ??
   'http://localhost:8080'
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
+
+export const API_BASE_URL = BASE_URL
 
 function headers(extra?: Record<string, string>): HeadersInit {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -108,6 +111,30 @@ export async function compileProject(projectId: string, format: 'pdf' | 'docx'):
 
 export function updateProjectSources(projectId: string, sources: string[]): Promise<Project> {
   return jreq(`/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ sources }) })
+}
+
+// --- project files (workspace) ---
+
+export function listFiles(projectId: string): Promise<{ files: ProjectFile[] }> {
+  return jreq(`/projects/${projectId}/files`)
+}
+
+export async function uploadFiles(projectId: string, files: File[]): Promise<{ files: ProjectFile[] }> {
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  const h: Record<string, string> = {}
+  if (API_KEY) h['x-api-key'] = API_KEY
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, { method: 'POST', headers: h, body: fd })
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  return res.json()
+}
+
+export function deleteFile(projectId: string, name: string): Promise<{ ok: boolean }> {
+  return jreq(`/projects/${projectId}/files/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function fileUrl(projectId: string, name: string): string {
+  return `${BASE_URL}/projects/${projectId}/files/${encodeURIComponent(name)}`
 }
 
 // ---------------------------------------------------------------------------

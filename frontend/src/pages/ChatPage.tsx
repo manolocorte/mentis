@@ -13,11 +13,24 @@ import {
   Loader2,
   PenLine,
   Telescope,
+  UploadCloud,
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
-import { streamChat, downloadDocument } from '../api/client'
+import { API_BASE_URL, streamChat, downloadDocument, uploadFiles } from '../api/client'
 import type { Citation } from '../api/types'
+
+// Resolve relative workspace image/file URLs (e.g. "/projects/<id>/files/<n>")
+// against the API origin so figures the Analyst produced render in the transcript.
+const MD_COMPONENTS = {
+  img: ({ src = '', alt = '' }: { src?: string; alt?: string }) => (
+    <img
+      src={src.startsWith('/') ? `${API_BASE_URL}${src}` : src}
+      alt={alt}
+      className="my-3 rounded-md border border-stone-200 dark:border-stone-800 max-w-full"
+    />
+  ),
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,7 +156,7 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
       {msg.status === 'streaming' && <ActivityLine label={msg.activity || 'Working'} />}
       {msg.content && (
         <div className="assistant-prose">
-          <ReactMarkdown>{msg.content}</ReactMarkdown>
+          <ReactMarkdown components={MD_COMPONENTS}>{msg.content}</ReactMarkdown>
         </div>
       )}
       <ToolTimeline tools={msg.tools} />
@@ -173,19 +186,58 @@ export default function ChatPage({
   conversationId,
   initialMessages,
   onTitle,
+  projectId,
+  onFilesChanged,
 }: {
   conversationId: string
   initialMessages: Message[]
   onTitle?: (conversationId: string, title: string) => void
+  projectId?: string
+  onFilesChanged?: () => void
 }) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
   const [working, setWorking] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [uploading, setUploading] = useState<string | null>(null)
   const convIdRef = useRef<string>(conversationId)
   const runningRef = useRef(false)
   const queueRef = useRef<string[]>([])
+  const dragDepth = useRef(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleFiles = async (files: File[]) => {
+    if (!projectId || !files.length) return
+    setUploading(files.length === 1 ? files[0].name : `${files.length} files`)
+    try {
+      await uploadFiles(projectId, files)
+      onFilesChanged?.()
+    } catch (e) {
+      alert('Upload failed: ' + (e instanceof Error ? e.message : 'error'))
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files') || !projectId) return
+    e.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current -= 1
+    if (dragDepth.current <= 0) setDragging(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length) handleFiles(files)
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -248,6 +300,7 @@ export default function ChatPage({
     } finally {
       runningRef.current = false
       patchLast((m) => (m.status === 'streaming' ? { ...m, status: 'done', activity: undefined } : m))
+      onFilesChanged?.() // a run may have produced figures/data in the workspace
       if (queueRef.current.length > 0) pump()
       else setWorking(false)
     }
@@ -271,7 +324,25 @@ export default function ChatPage({
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="relative flex flex-col h-full"
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => { if (dragging) e.preventDefault() }}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-mentis-50/90 dark:bg-stone-900/90 border-2 border-dashed border-mentis-400 dark:border-mentis-600 pointer-events-none">
+          <UploadCloud size={34} className="text-mentis-600 dark:text-mentis-400 mb-3" />
+          <p className="font-serif text-lg text-stone-700 dark:text-stone-200">Drop files to add to this project</p>
+          <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">Spreadsheets, CSVs, images — the Analyst can read them</p>
+        </div>
+      )}
+      {uploading && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full bg-stone-900 text-stone-100 px-4 py-1.5 text-xs shadow-lg">
+          <Loader2 size={13} className="animate-spin" /> Uploading {uploading}…
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-6 py-8">
         <div className="max-w-3xl mx-auto space-y-5">
           {messages.length === 0 && (

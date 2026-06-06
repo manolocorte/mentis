@@ -6,12 +6,33 @@ from __future__ import annotations
 
 import io
 import re
+from pathlib import Path
+from urllib.parse import unquote
 
 import markdown as md
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt, RGBColor
+from docx.shared import Inches, Pt, RGBColor
 from xhtml2pdf import pisa
+
+from .sandbox import workspace_for
+
+# Resolve markdown image refs like "/projects/<pid>/files/<name>" to the local
+# workspace file, so figures the Analyst produced embed in the document.
+_ASSET_RE = re.compile(r"/projects/([^/]+)/files/(.+)$")
+
+
+def _resolve_asset(uri: str) -> str | None:
+    m = _ASSET_RE.search(uri or "")
+    if m:
+        p = workspace_for(m.group(1)) / Path(unquote(m.group(2))).name
+        if p.is_file():
+            return str(p)
+    return None
+
+
+def _pdf_link_callback(uri: str, rel: str) -> str:
+    return _resolve_asset(uri) or uri
 
 # --- PDF (academic single-column) ---
 _CSS = """
@@ -31,6 +52,7 @@ a { color: #1a4f8b; text-decoration: none; }
 ol, ul { margin: 3pt 0 7pt 18pt; }
 li { margin: 0 0 3pt 0; }
 code { font-family: "Courier New", monospace; font-size: 10pt; }
+img { max-width: 100%; }
 """
 
 _FOOTER = (
@@ -60,7 +82,7 @@ def build_pdf(markdown_text: str, title: str | None = None) -> bytes:
         f"<body>{_FOOTER}{head}{body_html}</body></html>"
     )
     out = io.BytesIO()
-    if pisa.CreatePDF(src=html, dest=out, encoding="utf-8").err:
+    if pisa.CreatePDF(src=html, dest=out, encoding="utf-8", link_callback=_pdf_link_callback).err:
         raise RuntimeError("PDF generation failed")
     return out.getvalue()
 
@@ -78,6 +100,22 @@ def _clean_inline(text: str) -> str:
     for pat, repl in _INLINE:
         text = pat.sub(repl, text)
     return text.strip()
+
+
+_IMG_LINE = re.compile(r"^!\[[^\]]*\]\(([^)]+)\)$")
+
+
+def _add_image(doc: Document, uri: str) -> None:
+    path = _resolve_asset(uri)
+    if path:
+        try:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(path, width=Inches(5.5))
+            return
+        except Exception:  # noqa: BLE001 — fall back to a caption if the image won't embed
+            pass
+    doc.add_paragraph(_clean_inline(uri))
 
 
 def _heading(doc: Document, text: str, size: int) -> None:
@@ -111,6 +149,10 @@ def build_docx(markdown_text: str, title: str | None = None) -> bytes:
         line = raw.rstrip()
         s = line.strip()
         if not s:
+            continue
+        img = _IMG_LINE.match(s)
+        if img:
+            _add_image(doc, img.group(1))
             continue
         if s.startswith("# "):
             if s[2:].strip() == doc_title:

@@ -51,6 +51,29 @@ def current_workspace() -> Path:
     return ws
 
 
+# --- Per-run artifact collector --------------------------------------------
+# run_python records the files it produces here so the streaming layer can
+# surface them (figures, processed spreadsheets) to the UI and the export.
+# Reset at the start of each agent run.
+
+_artifacts: list[str] = []
+
+
+def reset_artifacts() -> None:
+    global _artifacts
+    _artifacts = []
+
+
+def record_artifacts(files: list[str]) -> None:
+    for f in files:
+        if f not in _artifacts:
+            _artifacts.append(f)
+
+
+def produced_artifacts() -> list[str]:
+    return list(_artifacts)
+
+
 @dataclass
 class SandboxResult:
     stdout: str

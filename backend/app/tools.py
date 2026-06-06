@@ -182,6 +182,7 @@ def _run_python_impl(code: str) -> str:
 
     ws = sandbox.current_workspace()
     res = sandbox.run_python(code, ws)
+    sandbox.record_artifacts(res.files)
     parts: list[str] = []
     if res.timed_out:
         parts.append("TIMEOUT: execution exceeded the time limit.")

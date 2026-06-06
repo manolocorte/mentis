@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import re
+from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .agents import AVAILABLE_SOURCES, build_supervisor
@@ -161,6 +163,91 @@ async def delete_project(pid: str, x_api_key: str | None = Header(default=None))
     return {"ok": True}
 
 
+# --- project files (per-project workspace the Analyst reads/writes) ---
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
+
+
+def _project_or_404(pid: str) -> dict:
+    project = store.get_project(pid)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    return project
+
+
+def _safe_file(pid: str, name: str) -> Path:
+    """Resolve a workspace file path, rejecting any path traversal."""
+    ws = workspace_for(pid).resolve()
+    target = (ws / Path(name).name).resolve()
+    if target != ws and ws not in target.parents:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    return target
+
+
+def _file_info(p: Path) -> dict:
+    st = p.stat()
+    return {
+        "name": p.name,
+        "size": st.st_size,
+        "modified": st.st_mtime,
+        "kind": "image" if p.suffix.lower() in _IMAGE_EXT else "file",
+    }
+
+
+@app.get("/projects/{pid}/files")
+async def list_files(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    _project_or_404(pid)
+    ws = workspace_for(pid)
+    files = (
+        sorted((_file_info(p) for p in ws.iterdir() if p.is_file()), key=lambda f: f["name"])
+        if ws.exists()
+        else []
+    )
+    return {"files": files}
+
+
+@app.post("/projects/{pid}/files")
+async def upload_files(
+    pid: str,
+    files: list[UploadFile] = File(...),
+    x_api_key: str | None = Header(default=None),
+):
+    _check_auth(x_api_key)
+    _project_or_404(pid)
+    ws = workspace_for(pid)
+    ws.mkdir(parents=True, exist_ok=True)
+    saved: list[dict] = []
+    for uf in files:
+        name = Path(uf.filename or "").name
+        if not name:
+            continue
+        dest = _safe_file(pid, name)
+        dest.write_bytes(await uf.read())
+        saved.append(_file_info(dest))
+    store.touch_project(pid)
+    return {"files": saved}
+
+
+@app.get("/projects/{pid}/files/{name}")
+async def get_file(pid: str, name: str, x_api_key: str | None = Header(default=None)):
+    # No auth gate: images load via <img src> which can't send headers. Files are
+    # scoped to the project workspace and contain only user/agent project data.
+    target = _safe_file(pid, name)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    media = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(target, media_type=media)
+
+
+@app.delete("/projects/{pid}/files/{name}")
+async def delete_file(pid: str, name: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    target = _safe_file(pid, name)
+    if target.is_file():
+        target.unlink()
+    return {"ok": True}
+
+
 @app.get("/projects/{pid}/conversations")
 async def list_conversations(pid: str, x_api_key: str | None = Header(default=None)):
     _check_auth(x_api_key)
@@ -242,7 +329,7 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
             {"conversation_id": cid, "project_id": pid, "title": title}
         ) + "\n\n"
         sink: dict = {}
-        async for frame in run_agent_sse(agent, prompt, sink):
+        async for frame in run_agent_sse(agent, prompt, sink, artifact_base=f"/projects/{pid}/files"):
             yield frame
         if sink.get("text"):
             store.add_message(cid, "assistant", sink["text"])

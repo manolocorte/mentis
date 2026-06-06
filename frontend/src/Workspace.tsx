@@ -2,16 +2,20 @@ import { useEffect, useState } from 'react'
 import {
   ChevronRight,
   FileDown,
+  FileText,
   FlaskConical,
+  Image as ImageIcon,
   Library as LibraryIcon,
   Loader2,
   Moon,
   NotebookPen,
+  Paperclip,
   Pencil,
   Plus,
   SlidersHorizontal,
   Sun,
   Trash2,
+  UploadCloud,
 } from 'lucide-react'
 import ChatPage from './pages/ChatPage'
 import type { Message } from './pages/ChatPage'
@@ -20,18 +24,29 @@ import {
   createConversation,
   createProject,
   deleteConversation,
+  deleteFile,
   deleteProject,
+  fileUrl,
   getConversationMessages,
   getLibrary,
   getSourceProviders,
   listConversations,
+  listFiles,
   listProjects,
   renameConversation,
   renameProject,
   updateBrief,
   updateProjectSources,
+  uploadFiles,
 } from './api/client'
-import type { Conversation, LibrarySource, Project, SourceProvider, StoredMessage } from './api/types'
+import type {
+  Conversation,
+  LibrarySource,
+  Project,
+  ProjectFile,
+  SourceProvider,
+  StoredMessage,
+} from './api/types'
 
 function toMessages(stored: StoredMessage[]): Message[] {
   return stored.map((m) =>
@@ -110,6 +125,88 @@ function LibraryPanel({ sources }: { sources: LibrarySource[] }) {
   )
 }
 
+function humanSize(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+function FilesPanel({
+  projectId,
+  files,
+  onUpload,
+  onDelete,
+}: {
+  projectId: string
+  files: ProjectFile[]
+  onUpload: (files: File[]) => void
+  onDelete: (name: string) => void
+}) {
+  const [drag, setDrag] = useState(false)
+  return (
+    <div className="h-full overflow-y-auto px-10 py-8">
+      <PanelHeading title="Files" sub="Data and figures for this project. The Analyst reads uploads and saves results here." />
+
+      <label
+        onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => { e.preventDefault(); setDrag(false); onUpload(Array.from(e.dataTransfer.files)) }}
+        className={`max-w-3xl flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 cursor-pointer transition-colors ${
+          drag
+            ? 'border-mentis-400 bg-mentis-50 dark:bg-stone-800'
+            : 'border-stone-300 dark:border-stone-700 hover:border-mentis-300 dark:hover:border-mentis-700'
+        }`}
+      >
+        <UploadCloud size={26} className="text-mentis-600 dark:text-mentis-400" />
+        <p className="text-sm text-stone-600 dark:text-stone-300">
+          Drop files here, or <span className="text-mentis-700 dark:text-mentis-300 underline underline-offset-2">browse</span>
+        </p>
+        <p className="font-mono text-[0.65rem] text-stone-400">Spreadsheets · CSV · images</p>
+        <input
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => { if (e.target.files) onUpload(Array.from(e.target.files)); e.currentTarget.value = '' }}
+        />
+      </label>
+
+      {files.length === 0 ? (
+        <p className="text-sm text-stone-400 mt-6">No files yet.</p>
+      ) : (
+        <ul className="max-w-3xl mt-6 grid grid-cols-2 gap-3">
+          {files.map((f) => (
+            <li key={f.name}
+              className="group relative flex items-center gap-3 rounded-lg border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-3">
+              {f.kind === 'image' ? (
+                <img src={fileUrl(projectId, f.name)} alt={f.name}
+                  className="w-12 h-12 rounded object-cover border border-stone-200 dark:border-stone-700 shrink-0" />
+              ) : (
+                <div className="w-12 h-12 rounded bg-stone-100 dark:bg-stone-800 flex items-center justify-center shrink-0">
+                  <FileText size={20} className="text-stone-400" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <a href={fileUrl(projectId, f.name)} target="_blank" rel="noopener noreferrer"
+                  className="block text-sm text-stone-800 dark:text-stone-100 truncate hover:text-mentis-700 dark:hover:text-mentis-300">
+                  {f.name}
+                </a>
+                <p className="font-mono text-[0.65rem] text-stone-400 mt-0.5 flex items-center gap-1">
+                  {f.kind === 'image' && <ImageIcon size={11} />}
+                  {humanSize(f.size)}
+                </p>
+              </div>
+              <button onClick={() => onDelete(f.name)} title="Delete file"
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-stone-400 hover:text-red-600 hover:bg-stone-100 dark:hover:bg-stone-800">
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function SourcesPanel({ project, providers, onToggle }: { project: Project; providers: SourceProvider[]; onToggle: (key: string) => void }) {
   const enabled = new Set(project.sources || [])
   return (
@@ -158,10 +255,11 @@ export default function Workspace() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [convsByProject, setConvsByProject] = useState<Record<string, Conversation[]>>({})
   const [libByProject, setLibByProject] = useState<Record<string, LibrarySource[]>>({})
+  const [filesByProject, setFilesByProject] = useState<Record<string, ProjectFile[]>>({})
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [initialMessages, setInitialMessages] = useState<Message[]>([])
-  const [view, setView] = useState<'chat' | 'library' | 'sources'>('chat')
+  const [view, setView] = useState<'chat' | 'library' | 'sources' | 'files'>('chat')
   const [providers, setProviders] = useState<SourceProvider[]>([])
   const [dark, setDark] = useState<boolean>(() => localStorage.getItem('mentis-theme') === 'dark')
   const [compiling, setCompiling] = useState<string | null>(null)
@@ -192,10 +290,42 @@ export default function Workspace() {
   }
 
   async function loadProject(pid: string): Promise<Conversation[]> {
-    const [{ conversations }, { sources }] = await Promise.all([listConversations(pid), getLibrary(pid)])
+    const [{ conversations }, { sources }, { files }] = await Promise.all([
+      listConversations(pid),
+      getLibrary(pid),
+      listFiles(pid),
+    ])
     setConvsByProject((m) => ({ ...m, [pid]: conversations }))
     setLibByProject((m) => ({ ...m, [pid]: sources }))
+    setFilesByProject((m) => ({ ...m, [pid]: files }))
     return conversations
+  }
+
+  async function refreshFiles(pid: string) {
+    const { files } = await listFiles(pid)
+    setFilesByProject((m) => ({ ...m, [pid]: files }))
+  }
+
+  function openFiles(pid: string) {
+    setActiveProjectId(pid)
+    setView('files')
+    refreshFiles(pid)
+  }
+
+  async function handleUploadFiles(pid: string, files: File[]) {
+    if (!files.length) return
+    try {
+      await uploadFiles(pid, files)
+      await refreshFiles(pid)
+    } catch (e) {
+      alert('Upload failed: ' + (e instanceof Error ? e.message : 'error'))
+    }
+  }
+
+  async function handleDeleteFile(pid: string, name: string) {
+    if (!window.confirm(`Delete "${name}"?`)) return
+    await deleteFile(pid, name)
+    await refreshFiles(pid)
   }
 
   async function toggleExpand(pid: string) {
@@ -380,6 +510,8 @@ export default function Workspace() {
                     <div className="mt-1 flex flex-wrap items-center gap-1">
                       <ToolLink active={view === 'library' && activeProjectId === p.id} onClick={() => openLibrary(p.id)}
                         icon={<LibraryIcon size={13} />}>Library · {(libByProject[p.id] || []).length}</ToolLink>
+                      <ToolLink active={view === 'files' && activeProjectId === p.id} onClick={() => openFiles(p.id)}
+                        icon={<Paperclip size={13} />}>Files · {(filesByProject[p.id] || []).length}</ToolLink>
                       <ToolLink active={view === 'sources' && activeProjectId === p.id} onClick={() => openSources(p.id)}
                         icon={<SlidersHorizontal size={13} />}>Sources</ToolLink>
                       <ToolLink onClick={() => editBrief(p.id)} icon={<NotebookPen size={13} />}>Brief</ToolLink>
@@ -420,8 +552,22 @@ export default function Workspace() {
           />
         ) : view === 'library' && activeProjectId ? (
           <LibraryPanel sources={libByProject[activeProjectId] || []} />
+        ) : view === 'files' && activeProjectId ? (
+          <FilesPanel
+            projectId={activeProjectId}
+            files={filesByProject[activeProjectId] || []}
+            onUpload={(files) => handleUploadFiles(activeProjectId, files)}
+            onDelete={(name) => handleDeleteFile(activeProjectId, name)}
+          />
         ) : activeConvId ? (
-          <ChatPage key={activeConvId} conversationId={activeConvId} initialMessages={initialMessages} onTitle={updateConvTitle} />
+          <ChatPage
+            key={activeConvId}
+            conversationId={activeConvId}
+            initialMessages={initialMessages}
+            onTitle={updateConvTitle}
+            projectId={activeProjectId ?? undefined}
+            onFilesChanged={() => activeProjectId && refreshFiles(activeProjectId)}
+          />
         ) : (
           <EmptyState
             title="No conversation open"

@@ -55,6 +55,13 @@ export interface StoredMessage {
   created_at: number
 }
 
+export interface ProjectFile {
+  name: string
+  size: number
+  modified: number
+  kind: 'image' | 'file'
+}
+
 export interface LibrarySource {
   doi: string
   title: string

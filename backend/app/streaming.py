@@ -13,12 +13,29 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 
 from strands import Agent
 
 from .citations import finalize_with_references
+from .sandbox import produced_artifacts, reset_artifacts
 from .sources import reset_run
+
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
+
+
+def _artifact_markdown(base: str) -> str:
+    """Render produced files as markdown: figures inline, other files as links."""
+    lines: list[str] = []
+    for name in produced_artifacts():
+        url = f"{base}/{quote(name)}"
+        if Path(name).suffix.lower() in _IMAGE_EXT:
+            lines.append(f"\n\n![{name}]({url})")
+        else:
+            lines.append(f"\n\n[{name}]({url})")
+    return "".join(lines)
 
 _THINK_BLOCK = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
 _OPEN = "<thinking>"
@@ -50,10 +67,14 @@ def _finalize(raw: str) -> str:
 
 
 async def run_agent_sse(
-    agent: Agent, prompt: str, sink: dict[str, Any] | None = None
+    agent: Agent,
+    prompt: str,
+    sink: dict[str, Any] | None = None,
+    artifact_base: str | None = None,
 ) -> AsyncIterator[str]:
     yield _sse("run_started", {})
     reset_run()
+    reset_artifacts()
     seen_tools: set[str] = set()
     raw = ""
     emitted = 0
@@ -76,6 +97,8 @@ async def run_agent_sse(
         yield _sse("status", {"label": "Checking sources & claims"})
         final_text = _finalize(raw)
         final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
+        if artifact_base:
+            final_text += _artifact_markdown(artifact_base)
         if citations:
             yield _sse("citations", {"items": citations})
         if sink is not None:
