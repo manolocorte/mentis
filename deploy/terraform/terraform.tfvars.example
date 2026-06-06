@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# REQUIRED — the login password (and the guard on your Bedrock bill).
+auth_password = "change-me-to-a-long-random-secret"
+
+# Login username (optional; defaults to "admin").
+auth_username = "manolo"
+
+# Private repo? Provide a GitHub PAT with read access. Omit for a public repo.
+# github_token = "ghp_xxx"
+
+# Deploy which branch/tag (defaults to "main"). Set to your branch if not merged yet.
+# git_ref = "main"
+
+# Research keys (optional).
+# scopus_api_key   = "your-elsevier-key"
+# scopus_insttoken = "usal-institutional-token"
+# contact_email    = "you@example.com"
+
+# Custom domain (optional). Leave unset to use <eip>.sslip.io (no DNS setup).
+# domain     = "mentis.example.com"
+# acme_email = "you@example.com"
+
+# Cheapest workable box. Bump to t4g.medium (4 GB) if you crunch large data.
+# instance_type  = "t4g.small"
+# sandbox_memory = "1g"
+
+# SSH is OFF by default (use SSM). To enable:
+# ssh_ingress_cidr = "1.2.3.4/32"
+# key_name         = "my-existing-keypair"

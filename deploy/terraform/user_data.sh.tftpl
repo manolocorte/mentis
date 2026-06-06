@@ -1,0 +1,164 @@
+#!/bin/bash
+# Mentis bootstrap (Amazon Linux 2023, arm64). Runs once at first boot.
+set -xeuo pipefail
+exec > >(tee /var/log/mentis-bootstrap.log) 2>&1
+
+# --- Terraform-injected values (the only templated lines in this file) ------
+REGION='${region}'
+EIP='${eip}'
+DOMAIN_VAR='${domain}'
+ACME_EMAIL='${acme_email}'
+GIT_REPO='${git_repo}'
+GIT_REF='${git_ref}'
+AUTH_USERNAME='${auth_username}'
+CONTACT_EMAIL='${contact_email}'
+SANDBOX_MEMORY='${sandbox_memory}'
+HAS_SCOPUS_KEY='${has_scopus_key}'
+HAS_SCOPUS_TOK='${has_scopus_tok}'
+HAS_GH_TOKEN='${has_gh_token}'
+# ---------------------------------------------------------------------------
+
+# Hostname to serve on: custom domain, else <eip>.sslip.io (no DNS setup needed).
+if [ -n "$DOMAIN_VAR" ]; then DOMAIN="$DOMAIN_VAR"; else DOMAIN="$EIP.sslip.io"; fi
+
+# Swap: headroom for the npm/docker builds and general comfort on a 2 GB box.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Packages.
+dnf update -y
+dnf install -y git docker nodejs npm python3 python3-pip python3-devel gcc unzip tar
+
+# AWS CLI v2 (arm64).
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+export PATH=/usr/local/bin:$PATH
+
+systemctl enable --now docker
+
+# Secrets from SSM (decrypted via the instance role).
+get_secret() {
+  aws ssm get-parameter --region "$REGION" --name "$1" --with-decryption \
+    --query Parameter.Value --output text 2>/dev/null || echo ""
+}
+AUTH_PASSWORD="$(get_secret /mentis/auth_password)"
+SCOPUS_API_KEY=""
+SCOPUS_INSTTOKEN=""
+GITHUB_TOKEN=""
+if [ "$HAS_SCOPUS_KEY" = "1" ]; then SCOPUS_API_KEY="$(get_secret /mentis/scopus_api_key)"; fi
+if [ "$HAS_SCOPUS_TOK" = "1" ]; then SCOPUS_INSTTOKEN="$(get_secret /mentis/scopus_insttoken)"; fi
+if [ "$HAS_GH_TOKEN" = "1" ]; then GITHUB_TOKEN="$(get_secret /mentis/github_token)"; fi
+
+# Clone the app.
+CLONE_URL="$GIT_REPO"
+if [ -n "$GITHUB_TOKEN" ]; then
+  CLONE_URL="$(echo "$GIT_REPO" | sed "s#https://#https://$GITHUB_TOKEN@#")"
+fi
+rm -rf /opt/mentis
+git clone --branch "$GIT_REF" --depth 1 "$CLONE_URL" /opt/mentis
+cd /opt/mentis
+
+# Sandbox image (the code interpreter).
+docker build -t mentis-sandbox:latest backend/sandbox
+
+# Backend venv + deps.
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install --upgrade pip
+backend/.venv/bin/pip install -r backend/requirements.txt
+
+# Backend .env.
+cat > backend/.env <<ENV
+AWS_REGION=$REGION
+AUTH_USERNAME=$AUTH_USERNAME
+AUTH_PASSWORD=$AUTH_PASSWORD
+SANDBOX_MEMORY=$SANDBOX_MEMORY
+ALLOWED_ORIGINS=https://$DOMAIN
+CONTACT_EMAIL=$CONTACT_EMAIL
+SCOPUS_API_KEY=$SCOPUS_API_KEY
+SCOPUS_INSTTOKEN=$SCOPUS_INSTTOKEN
+ENV
+chmod 600 backend/.env
+
+# Frontend build (same-origin API behind /api).
+cd /opt/mentis/frontend
+npm ci
+VITE_API_BASE_URL=/api npm run build
+cd /opt/mentis
+
+# Caddy (static binary).
+curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=arm64" -o /usr/bin/caddy
+chmod +x /usr/bin/caddy
+groupadd --system caddy || true
+useradd --system -g caddy -d /var/lib/caddy -m -s /usr/sbin/nologin caddy || true
+mkdir -p /etc/caddy
+
+EMAIL_BLOCK=""
+if [ -n "$ACME_EMAIL" ]; then EMAIL_BLOCK="{
+  email $ACME_EMAIL
+}"; fi
+
+cat > /etc/caddy/Caddyfile <<CADDY
+$EMAIL_BLOCK
+$DOMAIN {
+  encode gzip
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:8080
+  }
+  handle {
+    root * /opt/mentis/frontend/dist
+    try_files {path} /index.html
+    file_server
+  }
+}
+CADDY
+
+# systemd: backend (runs as root for docker socket access; the sandbox is the
+# isolation boundary).
+cat > /etc/systemd/system/mentis.service <<'UNIT'
+[Unit]
+Description=Mentis backend (uvicorn)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/opt/mentis/backend
+EnvironmentFile=/opt/mentis/backend/.env
+ExecStart=/opt/mentis/backend/.venv/bin/uvicorn app.server:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# systemd: Caddy.
+cat > /etc/systemd/system/caddy.service <<'UNIT'
+[Unit]
+Description=Caddy
+After=network.target
+
+[Service]
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+Restart=on-failure
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now mentis.service
+systemctl enable --now caddy.service
+
+echo "Mentis bootstrap complete. Serving on https://$DOMAIN" > /opt/mentis/BOOTSTRAP_DONE
