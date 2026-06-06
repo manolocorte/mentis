@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS library (
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY, username TEXT, created_at REAL, expires_at REAL
 );
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY, project_id TEXT, conversation_id TEXT,
+  prompt TEXT, status TEXT, result TEXT, error TEXT,
+  created_at REAL, finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_proj ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conv_proj ON conversations(project_id);
 """
@@ -246,6 +252,41 @@ class Store:
     def purge_expired_sessions(self) -> None:
         with self._conn() as c:
             c.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
+
+    # --- background jobs ---
+    def create_job(self, project_id: str, conversation_id: str, prompt: str) -> dict:
+        jid, now = uuid.uuid4().hex, time.time()
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO jobs(id,project_id,conversation_id,prompt,status,result,error,"
+                "created_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (jid, project_id, conversation_id, prompt, "running", "", "", now, None),
+            )
+        return {
+            "id": jid, "project_id": project_id, "conversation_id": conversation_id,
+            "prompt": prompt, "status": "running", "created_at": now,
+        }
+
+    def update_job(self, job_id: str, status: str, result: str = "", error: str = "") -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE jobs SET status=?, result=?, error=?, finished_at=? WHERE id=?",
+                (status, result, error, time.time(), job_id),
+            )
+
+    def get_job(self, job_id: str) -> dict | None:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(r) if r else None
+
+    def list_jobs(self, project_id: str, limit: int = 50) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id,project_id,conversation_id,prompt,status,error,created_at,finished_at "
+                "FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
 
 _store: Store | None = None

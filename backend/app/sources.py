@@ -2,13 +2,14 @@
 References list can be built deterministically from retrieved metadata instead of
 whatever the model writes from memory.
 
-Single-user assumption: one active run at a time. The collector is a process global
-reset at the start of each run. (A proper multi-user fix would use Strands tool
-context / per-session state.)
+Run state is held in contextvars, so concurrent runs (e.g. a background job and an
+interactive request) are isolated from each other rather than sharing a process
+global. Each run calls reset_run()/set_active_sources() in its own context.
 """
 from __future__ import annotations
 
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 
@@ -43,25 +44,29 @@ class SourceCollector:
             return idx
 
 
-_current = SourceCollector()
-_active_sources: list[str] = ["openalex", "scopus", "arxiv"]
+_current: ContextVar[SourceCollector] = ContextVar("mentis_collector")
+_active_sources: ContextVar[list[str]] = ContextVar(
+    "mentis_active_sources", default=["openalex", "scopus", "arxiv"]
+)
 
 
 def reset_run() -> SourceCollector:
-    global _current
-    _current = SourceCollector()
-    return _current
+    c = SourceCollector()
+    _current.set(c)
+    return c
 
 
 def current() -> SourceCollector:
-    return _current
+    try:
+        return _current.get()
+    except LookupError:
+        return reset_run()
 
 
 def set_active_sources(keys: list[str]) -> None:
     """Set which source providers the Researcher may use for the current run."""
-    global _active_sources
-    _active_sources = list(keys) or ["openalex"]
+    _active_sources.set(list(keys) or ["openalex"])
 
 
 def active_sources() -> list[str]:
-    return _active_sources
+    return _active_sources.get()

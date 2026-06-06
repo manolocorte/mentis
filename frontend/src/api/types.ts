@@ -55,6 +55,18 @@ export interface StoredMessage {
   created_at: number
 }
 
+export interface Job {
+  id: string
+  project_id: string
+  conversation_id: string
+  prompt: string
+  status: 'running' | 'done' | 'error'
+  result?: string
+  error?: string
+  created_at: number
+  finished_at?: number
+}
+
 export interface ProjectFile {
   name: string
   size: number

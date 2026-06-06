@@ -27,7 +27,7 @@ from .export import build_docx, build_pdf
 from .sandbox import set_workspace, workspace_for
 from .sources import set_active_sources
 from .store import get_store
-from .streaming import run_agent_sse
+from .streaming import run_agent_collect, run_agent_sse
 
 settings = get_settings()
 store = get_store()
@@ -79,6 +79,11 @@ class ConversationUpdate(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class JobRequest(BaseModel):
+    message: str
+    conversation_id: str | None = None
 
 
 def _auth_enabled() -> bool:
@@ -359,35 +364,45 @@ async def delete_conversation(cid: str, x_api_key: str | None = Header(default=N
 
 
 # --- chat ---
-@app.post("/chat/stream")
-async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=None)):
-    _check_auth(x_api_key)
-    conv = store.get_conversation(req.conversation_id) if req.conversation_id else None
+def _prepare_turn(message: str, conversation_id: str | None):
+    """Resolve/create the conversation + project, auto-title, persist the user
+    message, and build the agent prompt. Returns (project, conv, prompt). Does NOT
+    set run-context state (sources/workspace) — the caller does that in its own
+    run context (the SSE generator or the job task)."""
+    conv = store.get_conversation(conversation_id) if conversation_id else None
     if conv is None:
-        # Bootstrap a default project + conversation if the client didn't pick one.
         project = store.create_project("Default project")
         conv = store.create_conversation(project["id"], "New conversation")
     else:
         project = store.get_project(conv["project_id"])
-
-    set_active_sources(project.get("sources") or ["openalex"])
-    set_workspace(workspace_for(project["id"]))  # Analyst reads/writes this project's files
     history = store.get_messages(conv["id"], limit=settings.history_limit)
-    # Auto-title the conversation from its first message.
     title = conv.get("title")
     if (title in (None, "", "New conversation")) and not history:
-        derived = _derive_title(req.message)
+        derived = _derive_title(message)
         if derived:
             store.rename_conversation(conv["id"], derived)
-            title = derived
-    store.add_message(conv["id"], "user", req.message)
+            conv["title"] = derived
+    store.add_message(conv["id"], "user", message)
     ws = workspace_for(project["id"])
     ws_files = sorted(p.name for p in ws.iterdir() if p.is_file()) if ws.exists() else []
-    prompt = _build_prompt(project, history, req.message, ws_files)
+    prompt = _build_prompt(project, history, message, ws_files)
+    return project, conv, prompt
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    project, conv, prompt = _prepare_turn(req.message, req.conversation_id)
     agent = build_supervisor()
     cid, pid = conv["id"], project["id"]
+    title = conv.get("title")
+    sources_keys = project.get("sources") or ["openalex"]
 
     async def gen():
+        # Set run-context state INSIDE the generator so it lives in the same context
+        # the agent runs in (contextvars; isolated from any concurrent run).
+        set_active_sources(sources_keys)
+        set_workspace(workspace_for(pid))
         yield "event: conversation\ndata: " + json.dumps(
             {"conversation_id": cid, "project_id": pid, "title": title}
         ) + "\n\n"
@@ -403,6 +418,55 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
         store.touch_project(pid)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# --- background jobs (fire-and-forget; results land in the conversation) ----
+async def _run_job(job_id: str, pid: str, cid: str, prompt: str, sources_keys: list[str]) -> None:
+    try:
+        set_active_sources(sources_keys)
+        set_workspace(workspace_for(pid))
+        agent = build_supervisor()
+        text, citations = await asyncio.to_thread(
+            run_agent_collect, agent, prompt, f"/projects/{pid}/files"
+        )
+        store.add_message(cid, "assistant", text)
+        if citations:
+            store.add_library(pid, [c for c in citations if c.get("verified")])
+        store.update_job(job_id, "done", result=text)
+        store.touch_project(pid)
+    except Exception as e:  # noqa: BLE001
+        store.update_job(job_id, "error", error=str(e))
+
+
+@app.post("/jobs")
+async def submit_job(req: JobRequest, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    project, conv, prompt = _prepare_turn(req.message, req.conversation_id)
+    job = store.create_job(project["id"], conv["id"], req.message)
+    sources_keys = project.get("sources") or ["openalex"]
+    asyncio.create_task(_run_job(job["id"], project["id"], conv["id"], prompt, sources_keys))
+    return {
+        "job_id": job["id"],
+        "conversation_id": conv["id"],
+        "project_id": project["id"],
+        "title": conv.get("title"),
+    }
+
+
+@app.get("/projects/{pid}/jobs")
+async def list_project_jobs(pid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    _project_or_404(pid)
+    return {"jobs": store.list_jobs(pid)}
+
+
+@app.get("/jobs/{jid}")
+async def get_job_status(jid: str, x_api_key: str | None = Header(default=None)):
+    _check_auth(x_api_key)
+    job = store.get_job(jid)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @app.post("/export")

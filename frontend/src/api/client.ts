@@ -2,6 +2,7 @@ import type {
   Conversation,
   HealthResponse,
   LibrarySource,
+  Job,
   Project,
   ProjectFile,
   SourceProvider,
@@ -195,6 +196,23 @@ export function deleteFile(projectId: string, name: string): Promise<{ ok: boole
 
 export function fileUrl(projectId: string, name: string): string {
   return `${BASE_URL}/projects/${projectId}/files/${encodeURIComponent(name)}`
+}
+
+// --- background jobs ---
+
+export function submitJob(
+  message: string,
+  conversationId?: string,
+): Promise<{ job_id: string; conversation_id: string; project_id: string; title?: string }> {
+  return jreq('/jobs', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId }) })
+}
+
+export function listJobs(projectId: string): Promise<{ jobs: Job[] }> {
+  return jreq(`/projects/${projectId}/jobs`)
+}
+
+export function getJob(jobId: string): Promise<Job> {
+  return jreq(`/jobs/${jobId}`)
 }
 
 // ---------------------------------------------------------------------------

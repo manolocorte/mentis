@@ -71,6 +71,24 @@ def _finalize(raw: str) -> str:
     return s.strip()
 
 
+def run_agent_collect(
+    agent: Agent, prompt: str, artifact_base: str | None = None
+) -> tuple[str, list[dict]]:
+    """Run the agent to completion (no streaming) and return (final_text, citations).
+
+    Used by background jobs. Resets per-run state in the CURRENT context, so it is
+    safe to run in its own thread/context concurrently with an interactive request.
+    """
+    reset_run()
+    reset_artifacts()
+    raw = str(agent(prompt))
+    final_text = _finalize(raw)
+    final_text, citations = finalize_with_references(final_text)
+    if artifact_base:
+        final_text += _artifact_markdown(artifact_base)
+    return final_text, citations
+
+
 async def run_agent_sse(
     agent: Agent,
     prompt: str,

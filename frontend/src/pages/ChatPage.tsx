@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   BadgeCheck,
   ChevronRight,
+  Clock,
   FileDown,
   FileSearch,
   FileText,
@@ -17,7 +18,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
-import { API_BASE_URL, streamChat, downloadDocument, uploadFiles } from '../api/client'
+import { API_BASE_URL, streamChat, downloadDocument, getJob, listJobs, submitJob, uploadFiles } from '../api/client'
 import type { Citation } from '../api/types'
 
 // Resolve relative workspace image/file URLs (e.g. "/projects/<id>/files/<n>")
@@ -200,6 +201,8 @@ export default function ChatPage({
   const [working, setWorking] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState<string | null>(null)
+  const [runningJobs, setRunningJobs] = useState(0)
+  const shownJobs = useRef<Set<string>>(new Set())
   const convIdRef = useRef<string>(conversationId)
   const runningRef = useRef(false)
   const queueRef = useRef<string[]>([])
@@ -242,6 +245,51 @@ export default function ChatPage({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Background jobs: on mount, mark already-finished jobs as seen (their results
+  // are already in the loaded transcript) so only jobs that finish DURING this
+  // session get appended.
+  useEffect(() => {
+    if (!projectId) return
+    listJobs(projectId)
+      .then(({ jobs }) => {
+        jobs.forEach((j) => { if (j.status !== 'running') shownJobs.current.add(j.id) })
+        setRunningJobs(jobs.filter((j) => j.status === 'running').length)
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  const refreshJobs = async () => {
+    if (!projectId) return
+    try {
+      const { jobs } = await listJobs(projectId)
+      setRunningJobs(jobs.filter((j) => j.status === 'running').length)
+      for (const j of jobs) {
+        if (j.conversation_id !== convIdRef.current) continue
+        if (j.status === 'running' || shownJobs.current.has(j.id)) continue
+        shownJobs.current.add(j.id)
+        const full = j.status === 'done' ? await getJob(j.id) : j
+        const content = j.status === 'error'
+          ? `> **Background task failed:** ${full.error || 'unknown error'}`
+          : full.result || '(no output)'
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content, tools: [], citations: [], status: j.status === 'error' ? 'error' : 'done' },
+        ])
+      }
+    } catch {
+      // transient; next tick retries
+    }
+  }
+
+  // Poll while any background job is running.
+  useEffect(() => {
+    if (runningJobs <= 0) return
+    const t = setTimeout(refreshJobs, 4000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningJobs, messages])
 
   const patchLast = (fn: (m: AssistantMessage) => AssistantMessage) => {
     setMessages((prev) => {
@@ -323,6 +371,31 @@ export default function ChatPage({
     }
   }
 
+  // Fire-and-forget: runs server-side; the result lands in this conversation when
+  // ready (you can navigate away or close the tab).
+  const handleBackground = () => {
+    const q = input.trim()
+    if (!q) return
+    setInput('')
+    textareaRef.current?.focus()
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: q },
+      {
+        role: 'assistant',
+        content: '_Running in the background — you can keep working or close this; the result will appear here when ready._',
+        tools: [], citations: [], status: 'done',
+      },
+    ])
+    submitJob(q, convIdRef.current)
+      .then((info) => {
+        convIdRef.current = info.conversation_id
+        if (info.title) onTitle?.(info.conversation_id, info.title)
+        setRunningJobs((n) => n + 1) // kicks off polling
+      })
+      .catch((e) => alert('Could not queue job: ' + (e instanceof Error ? e.message : 'error')))
+  }
+
   return (
     <div
       className="relative flex flex-col h-full"
@@ -386,6 +459,11 @@ export default function ChatPage({
               rows={2}
               className="flex-1 resize-none rounded-lg border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-800 dark:text-stone-100 placeholder-stone-400 px-4 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-mentis-500/40 focus:border-mentis-500"
             />
+            <button onClick={handleBackground} disabled={!input.trim()} aria-label="Run in background"
+              title="Run in background — result appears here when ready; you can leave"
+              className="shrink-0 w-10 h-10 flex items-center justify-center border border-stone-300 dark:border-stone-700 text-stone-500 hover:text-mentis-700 dark:hover:text-mentis-300 hover:border-mentis-400 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <Clock size={17} />
+            </button>
             <button onClick={handleSend} disabled={!input.trim()} aria-label="Send"
               className="shrink-0 w-10 h-10 flex items-center justify-center bg-mentis-600 text-white rounded-lg hover:bg-mentis-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ArrowUp size={18} />
@@ -394,6 +472,7 @@ export default function ChatPage({
           <div className="mt-1.5 font-mono text-[0.65rem] uppercase tracking-wider text-stone-400">
             {working ? 'Working — you can still send' : ''}
             {queueRef.current.length > 0 ? `  ·  ${queueRef.current.length} queued` : ''}
+            {runningJobs > 0 ? `  ·  ${runningJobs} running in background` : ''}
           </div>
         </div>
       </div>
