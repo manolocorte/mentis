@@ -50,7 +50,7 @@ SOURCE_TOOLS = {
 AVAILABLE_SOURCES = [
     {"key": "openalex", "label": "OpenAlex", "free": True},
     {"key": "arxiv", "label": "arXiv (preprints)", "free": True},
-    {"key": "scopus", "label": "Scopus — Univ. Salamanca", "free": False, "requires": "scopus_api_key"},
+    {"key": "scopus", "label": "Scopus — Univ. Valladolid", "free": False, "requires": "scopus_api_key"},
 ]
 
 

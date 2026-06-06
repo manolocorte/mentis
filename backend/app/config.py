@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # --- Research tools ---
     scopus_api_key: str | None = None
-    scopus_insttoken: str | None = None  # USAL institutional token for off-campus full access
+    scopus_insttoken: str | None = None  # UVa institutional token for off-campus full access
     scopus_base_url: str = "https://api.elsevier.com/content"
     contact_email: str | None = None  # OpenAlex/Unpaywall polite pool
 

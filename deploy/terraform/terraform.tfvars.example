@@ -14,7 +14,7 @@ auth_username = "manolo"
 
 # Research keys (optional).
 # scopus_api_key   = "your-elsevier-key"
-# scopus_insttoken = "usal-institutional-token"
+# scopus_insttoken = "uva-institutional-token"
 # contact_email    = "you@example.com"
 
 # Custom domain (optional). Leave unset to use <eip>.sslip.io (no DNS setup).
