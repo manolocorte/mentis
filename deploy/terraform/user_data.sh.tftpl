@@ -30,9 +30,10 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# Packages.
+# Packages. NB: AL2023's default python3 is 3.9; strands-agents needs >=3.10,
+# so install python3.11 explicitly and use it for the backend venv.
 dnf update -y
-dnf install -y git docker nodejs npm python3 python3-pip python3-devel gcc unzip tar
+dnf install -y git docker nodejs npm python3.11 python3.11-pip gcc unzip tar
 
 # AWS CLI v2 (arm64).
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
@@ -67,8 +68,8 @@ cd /opt/mentis
 # Sandbox image (the code interpreter).
 docker build -t mentis-sandbox:latest backend/sandbox
 
-# Backend venv + deps.
-python3 -m venv backend/.venv
+# Backend venv + deps (python3.11 — strands-agents needs >=3.10).
+python3.11 -m venv backend/.venv
 backend/.venv/bin/pip install --upgrade pip
 backend/.venv/bin/pip install -r backend/requirements.txt
 
