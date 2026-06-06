@@ -110,11 +110,11 @@ if [ -n "$ACME_EMAIL" ]; then EMAIL_BLOCK="{
 cat > /etc/caddy/Caddyfile <<CADDY
 $EMAIL_BLOCK
 $DOMAIN {
-  encode gzip
   handle_path /api/* {
     reverse_proxy 127.0.0.1:8080
   }
   handle {
+    encode gzip
     root * /opt/mentis/frontend/dist
     try_files {path} /index.html
     file_server
