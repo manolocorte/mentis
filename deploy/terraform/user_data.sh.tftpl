@@ -33,7 +33,9 @@ fi
 # Packages. NB: AL2023's default python3 is 3.9; strands-agents needs >=3.10,
 # so install python3.11 explicitly and use it for the backend venv.
 dnf update -y
-dnf install -y git docker nodejs npm python3.11 python3.11-pip gcc unzip tar
+# cairo-devel: pycairo (xhtml2pdf -> svglib -> rlpycairo -> pycairo) has no arm64
+# wheel and compiles from source; it needs the cairo C library.
+dnf install -y git docker nodejs npm python3.11 python3.11-pip gcc cairo-devel unzip tar
 
 # AWS CLI v2 (arm64).
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
