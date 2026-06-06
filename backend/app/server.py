@@ -27,15 +27,10 @@ from .export import build_docx, build_pdf
 from .sandbox import set_workspace, workspace_for
 from .sources import set_active_sources
 from .store import get_store
-from .streaming import run_agent_collect, run_agent_sse
+from .streaming import run_agent_sse
 
 settings = get_settings()
 store = get_store()
-
-# Serialize agent runs: run-state (sources/workspace/collector) is process-global,
-# and one agent loop at a time is the right load for a 2-core box anyway. A waiting
-# run still streams its conversation event immediately; it just queues to execute.
-_run_lock = asyncio.Lock()
 
 app = FastAPI(title="Mentis-lean", version="0.2.0")
 app.add_middleware(
@@ -404,44 +399,43 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
     sources_keys = project.get("sources") or ["openalex"]
 
     async def gen():
-        # Conversation event goes out immediately (even if a run is queued ahead).
         yield "event: conversation\ndata: " + json.dumps(
             {"conversation_id": cid, "project_id": pid, "title": title}
         ) + "\n\n"
-        # One agent run at a time; set the global run-state under the lock so it is
-        # correct for this run and can't be overwritten by a concurrent run.
-        async with _run_lock:
-            set_active_sources(sources_keys)
-            set_workspace(workspace_for(pid))
-            sink: dict = {}
-            async for frame in run_agent_sse(agent, prompt, sink, artifact_base=f"/projects/{pid}/files"):
-                yield frame
-            if sink.get("text"):
-                store.add_message(cid, "assistant", sink["text"])
-            if sink.get("citations"):
-                verified = [c for c in sink["citations"] if c.get("verified")]
-                if verified:
-                    store.add_library(pid, verified)
-            store.touch_project(pid)
+        set_active_sources(sources_keys)
+        set_workspace(workspace_for(pid))
+        sink: dict = {}
+        async for frame in run_agent_sse(agent, prompt, sink, artifact_base=f"/projects/{pid}/files"):
+            yield frame
+        if sink.get("text"):
+            store.add_message(cid, "assistant", sink["text"])
+        if sink.get("citations"):
+            verified = [c for c in sink["citations"] if c.get("verified")]
+            if verified:
+                store.add_library(pid, verified)
+        store.touch_project(pid)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 # --- background jobs (fire-and-forget; results land in the conversation) ----
 async def _run_job(job_id: str, pid: str, cid: str, prompt: str, sources_keys: list[str]) -> None:
+    # Runs on the event loop via the SAME async path as interactive chat (proven),
+    # just without streaming to a client — consume the generator and keep the result.
     try:
-        async with _run_lock:
-            set_active_sources(sources_keys)
-            set_workspace(workspace_for(pid))
-            agent = build_supervisor()
-            text, citations = await asyncio.to_thread(
-                run_agent_collect, agent, prompt, f"/projects/{pid}/files"
-            )
-            store.add_message(cid, "assistant", text)
-            if citations:
-                store.add_library(pid, [c for c in citations if c.get("verified")])
-            store.update_job(job_id, "done", result=text)
-            store.touch_project(pid)
+        set_active_sources(sources_keys)
+        set_workspace(workspace_for(pid))
+        agent = build_supervisor()
+        sink: dict = {}
+        async for _ in run_agent_sse(agent, prompt, sink, artifact_base=f"/projects/{pid}/files"):
+            pass
+        text = sink.get("text", "") or "(no output)"
+        store.add_message(cid, "assistant", text)
+        citations = sink.get("citations") or []
+        if citations:
+            store.add_library(pid, [c for c in citations if c.get("verified")])
+        store.update_job(job_id, "done", result=text)
+        store.touch_project(pid)
     except Exception as e:  # noqa: BLE001
         store.update_job(job_id, "error", error=str(e))
 
