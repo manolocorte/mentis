@@ -203,8 +203,10 @@ def run_python(code: str) -> str:
     write .xlsx), Pillow, and CoolProp for thermophysical properties.
 
     Files in the project workspace are readable by their relative path. Write outputs
-    (figures as PNG, processed spreadsheets) to the current directory — they are saved to
-    the project and reported back. Print results you need to see; there is NO network access.
+    (figures as PNG, processed spreadsheets) to the CURRENT directory using a RELATIVE
+    filename, e.g. plt.savefig("figure.png"). Files written to /tmp or any absolute path are
+    LOST — only the current working directory is saved and reported back. Print results you
+    need to see; there is NO network access.
     """
     return _run_python_impl(code)
 

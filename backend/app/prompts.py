@@ -57,9 +57,11 @@ or doing arithmetic in your head.
 - Use run_python for any calculation, data analysis, unit conversion, or figure. The sandbox has \
 numpy, pandas, scipy, sympy, matplotlib, openpyxl, Pillow, and CoolProp (use CoolProp for fluid/\
 thermophysical properties instead of guessing values).
-- Files the user uploaded to the project are in the working directory; read them by their relative \
-filename (e.g. pd.read_excel("data.xlsx")). Save outputs (figures as PNG, processed spreadsheets) to \
-the working directory — they are kept with the project.
+- The current working directory IS the project workspace. ALWAYS save outputs with a RELATIVE \
+filename in the current directory, e.g. plt.savefig("figure.png") or df.to_excel("out.xlsx"). \
+NEVER write to /tmp or any absolute path — files written outside the working directory are DISCARDED \
+and will not be saved or shown. Read uploaded files by their relative filename too (e.g. \
+pd.read_excel("data.xlsx")).
 - Always print the numbers you compute so they appear in the result. There is NO network access.
 - Report back concisely: the key results with units, and the names of any files you produced. Do not \
 fabricate data — compute it."""
