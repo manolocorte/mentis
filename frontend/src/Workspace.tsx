@@ -7,6 +7,7 @@ import {
   Image as ImageIcon,
   Library as LibraryIcon,
   Loader2,
+  LogOut,
   Moon,
   NotebookPen,
   Paperclip,
@@ -250,7 +251,7 @@ function EmptyState({ title, actionLabel, onAction }: { title: string; actionLab
   )
 }
 
-export default function Workspace() {
+export default function Workspace({ onLogout }: { onLogout?: () => void }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [convsByProject, setConvsByProject] = useState<Record<string, Conversation[]>>({})
@@ -532,12 +533,18 @@ export default function Workspace() {
           })}
         </div>
 
-        <div className="px-4 py-3 border-t border-stone-800">
+        <div className="px-4 py-3 border-t border-stone-800 flex items-center justify-between">
           <button onClick={() => setDark((d) => !d)}
             className="flex items-center gap-2 text-xs text-stone-400 hover:text-stone-100">
             {dark ? <Sun size={14} /> : <Moon size={14} />}
             {dark ? 'Light mode' : 'Dark mode'}
           </button>
+          {onLogout && (
+            <button onClick={onLogout} title="Sign out"
+              className="flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-100">
+              <LogOut size={14} /> Sign out
+            </button>
+          )}
         </div>
       </aside>
 

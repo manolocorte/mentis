@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS library (
   verified INTEGER, created_at REAL,
   PRIMARY KEY (project_id, dedup_key)
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY, username TEXT, created_at REAL, expires_at REAL
+);
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conv_proj ON conversations(project_id);
 """
@@ -216,6 +219,33 @@ class Store:
                 (project_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+
+    # --- auth sessions (server-side, so logout truly revokes) ---
+    def create_session(self, token: str, username: str, expires_at: float) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO sessions(token,username,created_at,expires_at) VALUES(?,?,?,?)",
+                (token, username, time.time(), expires_at),
+            )
+
+    def get_session(self, token: str) -> dict | None:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
+        if not r:
+            return None
+        if r["expires_at"] < time.time():
+            self.delete_session(token)
+            return None
+        return dict(r)
+
+    def delete_session(self, token: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM sessions WHERE token=?", (token,))
+
+    def purge_expired_sessions(self) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
 
 
 _store: Store | None = None

@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     scopus_base_url: str = "https://api.elsevier.com/content"
     contact_email: str | None = None  # OpenAlex/Unpaywall polite pool
 
+    # --- Auth (single-user login). Set auth_password on the server to require login;
+    # leave unset for frictionless local dev. ---
+    auth_username: str = "admin"
+    auth_password: str | None = None
+    session_ttl_hours: int = 168  # 7 days
+
     # --- App ---
     api_key: str | None = None
     conversation_store: str = "local"        # "local" | "dynamo"

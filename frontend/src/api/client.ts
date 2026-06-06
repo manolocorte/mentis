@@ -20,16 +20,74 @@ const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
 
 export const API_BASE_URL = BASE_URL
 
+// --- session token ---
+const TOKEN_KEY = 'mentis-token'
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+function setToken(t: string): void {
+  localStorage.setItem(TOKEN_KEY, t)
+}
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY)
+}
+function authToken(): string | undefined {
+  return getToken() ?? API_KEY ?? undefined
+}
+
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn
+}
+function notifyUnauthorized(): void {
+  clearToken()
+  onUnauthorized?.()
+}
+
 function headers(extra?: Record<string, string>): HeadersInit {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (API_KEY) h['x-api-key'] = API_KEY
+  const t = authToken()
+  if (t) h['x-api-key'] = t
   return { ...h, ...extra }
 }
 
 async function jreq<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: headers(init?.headers as Record<string, string>) })
+  if (res.status === 401) notifyUnauthorized()
   if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
   return res.json() as Promise<T>
+}
+
+// --- auth ---
+export function getAuthStatus(): Promise<{ auth_required: boolean }> {
+  return jreq('/auth/status')
+}
+
+export async function login(username: string, password: string): Promise<{ token: string; username: string }> {
+  const res = await fetch(`${BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) {
+    throw new Error(res.status === 401 ? 'Invalid username or password' : `${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  }
+  const data = await res.json()
+  setToken(data.token)
+  return data
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${BASE_URL}/auth/logout`, { method: 'POST', headers: headers() })
+  } catch {
+    // ignore network errors on logout — we clear the token regardless
+  }
+  clearToken()
+}
+
+export function getMe(): Promise<{ username: string | null; auth_required: boolean }> {
+  return jreq('/auth/me')
 }
 
 export function getHealth(): Promise<HealthResponse> {
@@ -123,8 +181,10 @@ export async function uploadFiles(projectId: string, files: File[]): Promise<{ f
   const fd = new FormData()
   for (const f of files) fd.append('files', f)
   const h: Record<string, string> = {}
-  if (API_KEY) h['x-api-key'] = API_KEY
+  const t = authToken()
+  if (t) h['x-api-key'] = t
   const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, { method: 'POST', headers: h, body: fd })
+  if (res.status === 401) notifyUnauthorized()
   if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
   return res.json()
 }
@@ -195,6 +255,7 @@ export async function streamChat(
     body: JSON.stringify(body),
     signal,
   })
+  if (res.status === 401) notifyUnauthorized()
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(`${res.status}: ${text}`)

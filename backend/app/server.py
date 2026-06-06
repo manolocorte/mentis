@@ -7,9 +7,12 @@ Lift to AgentCore later: swap FastAPI for BedrockAgentCoreApp + @app.entrypoint.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import re
+import secrets
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
@@ -73,9 +76,22 @@ class ConversationUpdate(BaseModel):
     title: str
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def _auth_enabled() -> bool:
+    return bool(settings.auth_password)
+
+
 def _check_auth(x_api_key: str | None) -> None:
-    if settings.api_key and x_api_key != settings.api_key:
-        raise HTTPException(status_code=401, detail="invalid api key")
+    """Validate the session token sent as x-api-key. No-op when auth is disabled
+    (local dev, no password configured)."""
+    if not _auth_enabled():
+        return
+    if not x_api_key or not store.get_session(x_api_key):
+        raise HTTPException(status_code=401, detail="not authenticated")
 
 
 def _derive_title(message: str) -> str:
@@ -124,6 +140,44 @@ async def health() -> dict:
         "draft_model": settings.model_draft,
         "scopus": bool(settings.scopus_api_key),
     }
+
+
+# --- auth (single-user login -> server-side session token) ---
+@app.get("/auth/status")
+async def auth_status() -> dict:
+    return {"auth_required": _auth_enabled()}
+
+
+@app.post("/auth/login")
+async def login(req: LoginRequest) -> dict:
+    if not _auth_enabled():
+        raise HTTPException(status_code=400, detail="auth is not enabled")
+    ok_user = hmac.compare_digest(req.username, settings.auth_username)
+    ok_pass = hmac.compare_digest(req.password, settings.auth_password or "")
+    if not (ok_user and ok_pass):
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    store.purge_expired_sessions()
+    token = secrets.token_urlsafe(32)
+    expires = time.time() + settings.session_ttl_hours * 3600
+    store.create_session(token, req.username, expires)
+    return {"token": token, "username": req.username, "expires_at": expires}
+
+
+@app.post("/auth/logout")
+async def logout(x_api_key: str | None = Header(default=None)) -> dict:
+    if x_api_key:
+        store.delete_session(x_api_key)
+    return {"ok": True}
+
+
+@app.get("/auth/me")
+async def me(x_api_key: str | None = Header(default=None)) -> dict:
+    if not _auth_enabled():
+        return {"username": None, "auth_required": False}
+    sess = store.get_session(x_api_key) if x_api_key else None
+    if not sess:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return {"username": sess["username"], "auth_required": True}
 
 
 # --- projects ---
