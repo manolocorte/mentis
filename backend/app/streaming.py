@@ -20,6 +20,7 @@ from urllib.parse import quote
 from strands import Agent
 
 from .citations import finalize_with_references
+from .config import get_settings
 from .sandbox import produced_artifacts, reset_artifacts
 from .sources import reset_run
 
@@ -83,24 +84,40 @@ async def run_agent_sse(
     seen_tools: set[str] = set()
     raw = ""
     emitted = 0
+    timed_out = False
     try:
-        async for ev in agent.stream_async(prompt):
-            if not isinstance(ev, dict):
-                continue
-            if ev.get("data"):
-                raw += str(ev["data"])
-                clean = _clean_stream(raw)
-                if len(clean) > emitted:
-                    yield _sse("token", {"text": clean[emitted:]})
-                    emitted = len(clean)
-            tu = ev.get("current_tool_use")
-            if tu and tu.get("name"):
-                key = f"{tu.get('toolUseId', '')}:{tu['name']}"
-                if key not in seen_tools:
-                    seen_tools.add(key)
-                    yield _sse("tool_call", {"name": tu["name"], "input": tu.get("input", {})})
+        # Hard wall-clock ceiling: a stalled Bedrock stream (or a wedged sub-agent
+        # thread) becomes a clean, bounded error instead of freezing the app. The
+        # orchestrator loop stays free (Strands runs sync tools via to_thread), so
+        # this timeout actually fires even when a worker thread is stuck.
+        try:
+            async with asyncio.timeout(get_settings().run_timeout):
+                async for ev in agent.stream_async(prompt):
+                    if not isinstance(ev, dict):
+                        continue
+                    if ev.get("data"):
+                        raw += str(ev["data"])
+                        clean = _clean_stream(raw)
+                        if len(clean) > emitted:
+                            yield _sse("token", {"text": clean[emitted:]})
+                            emitted = len(clean)
+                    tu = ev.get("current_tool_use")
+                    if tu and tu.get("name"):
+                        key = f"{tu.get('toolUseId', '')}:{tu['name']}"
+                        if key not in seen_tools:
+                            seen_tools.add(key)
+                            yield _sse("tool_call", {"name": tu["name"], "input": tu.get("input", {})})
+        except (TimeoutError, asyncio.TimeoutError):
+            timed_out = True
+            yield _sse("status", {"label": "Run timed out — returning partial output"})
         yield _sse("status", {"label": "Checking sources & claims"})
         final_text = _finalize(raw)
+        if timed_out:
+            final_text = (
+                (final_text + "\n\n_(Stopped early: the run hit the time limit; this answer may be incomplete.)_")
+                if final_text
+                else "The run took too long and was stopped before producing an answer. Try a smaller or more specific request."
+            )
         final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
         if artifact_base:
             final_text += _artifact_markdown(artifact_base)

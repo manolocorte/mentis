@@ -18,6 +18,27 @@ from . import models, prompts, sandbox, sources, tools
 
 logger = logging.getLogger(__name__)
 
+# Claude (model_draft / model_verify) is unavailable until the Anthropic use-case
+# form is accepted for the account — every call raises ResourceNotFoundException
+# ("use case details have not been submitted"). Once we've seen that once, skip the
+# doomed Claude attempt on every later analyze()/draft_section() call: it wastes a
+# Bedrock round-trip and the failed stream is correlated with run stalls. Cleared on
+# process restart, so accepting the form + restarting re-enables Claude automatically.
+_claude_unavailable = False
+
+
+def _note_model_failure(exc: Exception) -> None:
+    """Latch Claude-unavailable when we see the Bedrock 'use case not submitted' signal."""
+    global _claude_unavailable
+    msg = str(exc).lower()
+    if "use case" in msg or "have not been submitted" in msg or "resourcenotfound" in msg:
+        _claude_unavailable = True
+
+
+def _draft_models() -> list:
+    """Claude → Nova, skipping Claude once it's proven unavailable this process."""
+    return [models.supervisor_model] if _claude_unavailable else [models.draft_model, models.supervisor_model]
+
 # Registry of source providers (key -> tool). Add new providers here.
 SOURCE_TOOLS = {
     "openalex": tools.search_literature,
@@ -58,7 +79,7 @@ def draft_section(request: str, sources: str) -> str:
     """
     message = f"REQUEST:\n{request}\n\nSOURCES:\n{sources}"
     last_err: Exception | None = None
-    for make_model in (models.draft_model, models.supervisor_model):  # Claude → Nova fallback
+    for make_model in _draft_models():  # Claude → Nova fallback (Claude skipped if unavailable)
         try:
             writer = Agent(
                 model=make_model(),
@@ -68,6 +89,7 @@ def draft_section(request: str, sources: str) -> str:
             return str(writer(message))
         except Exception as e:  # noqa: BLE001
             last_err = e
+            _note_model_failure(e)
             logger.warning("writer model failed, trying fallback: %s", e)
     return f"drafting failed: {last_err}"
 
@@ -90,7 +112,7 @@ def analyze(task: str) -> str:
     full_task = f"{file_note}\n\n{task}"
 
     last_err: Exception | None = None
-    for make_model in (models.draft_model, models.supervisor_model):  # Claude → Nova fallback
+    for make_model in _draft_models():  # Claude → Nova fallback (Claude skipped if unavailable)
         try:
             analyst = Agent(
                 model=make_model(),
@@ -101,6 +123,7 @@ def analyze(task: str) -> str:
             return str(analyst(full_task))
         except Exception as e:  # noqa: BLE001
             last_err = e
+            _note_model_failure(e)
             logger.warning("analyst model failed, trying fallback: %s", e)
     return f"analysis failed: {last_err}"
 

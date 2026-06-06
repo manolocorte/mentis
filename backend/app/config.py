@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     history_limit: int = 12                   # recent messages fed to the agent for continuity
     allowed_origins: str = "*"
     max_tool_steps: int = 8
+    run_timeout: int = 240                     # hard wall-clock ceiling per agent run (s); a stalled
+                                               # Bedrock stream becomes a clean error, never a freeze
 
 
 @lru_cache
