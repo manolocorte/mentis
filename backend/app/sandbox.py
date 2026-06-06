@@ -13,12 +13,30 @@ libraries, same ``/workspace`` contract, same result shape.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import get_settings
+
+
+def _ensure_writable(path: Path) -> Path:
+    """Create the workspace dir and make it writable by the sandbox container.
+
+    The container runs as a non-root user (`sandbox`); on Linux, bind mounts keep
+    the host's ownership, so a root-owned 0755 workspace is read-only to it and
+    figure/file writes fail with EACCES (this silently works on Docker Desktop,
+    which ignores mount ownership — hence it only broke once deployed). uvicorn
+    runs as root here, so it can open the per-project dir up for the container.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o777)
+    except OSError:
+        pass
+    return path
 
 
 # --- Workspace context -----------------------------------------------------
@@ -47,8 +65,7 @@ def set_workspace(path: Path | str | None) -> None:
 
 def current_workspace() -> Path:
     ws = _current_workspace if _current_workspace is not None else workspace_root() / "_scratch"
-    ws.mkdir(parents=True, exist_ok=True)
-    return ws
+    return _ensure_writable(ws)
 
 
 # --- Per-run artifact collector --------------------------------------------
@@ -117,8 +134,7 @@ def run_python(
     memory = memory or s.sandbox_memory
     cpus = cpus or s.sandbox_cpus
 
-    workspace = Path(workspace)
-    workspace.mkdir(parents=True, exist_ok=True)
+    workspace = _ensure_writable(Path(workspace))
     before = _snapshot(workspace)
 
     name = f"mentis-run-{uuid.uuid4().hex[:12]}"
