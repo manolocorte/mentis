@@ -14,7 +14,7 @@ import logging
 
 from strands import Agent, tool
 
-from . import models, prompts, sources, tools
+from . import models, prompts, sandbox, sources, tools
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,16 @@ def analyze(task: str) -> str:
     sandbox. Use for any quantity that should be COMPUTED rather than estimated. Returns the results
     and the names of any files saved to the project workspace.
     """
+    ws = sandbox.current_workspace()
+    files = sorted(p.name for p in ws.iterdir() if p.is_file()) if ws.exists() else []
+    file_note = (
+        "Files already in your working directory (read them by these exact names): "
+        + ", ".join(files)
+        if files
+        else "No files have been uploaded to the working directory yet."
+    )
+    full_task = f"{file_note}\n\n{task}"
+
     last_err: Exception | None = None
     for make_model in (models.draft_model, models.supervisor_model):  # Claude → Nova fallback
         try:
@@ -88,7 +98,7 @@ def analyze(task: str) -> str:
                 callback_handler=None,
                 tools=[tools.run_python],
             )
-            return str(analyst(task))
+            return str(analyst(full_task))
         except Exception as e:  # noqa: BLE001
             last_err = e
             logger.warning("analyst model failed, trying fallback: %s", e)

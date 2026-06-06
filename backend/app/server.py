@@ -83,11 +83,18 @@ def _derive_title(message: str) -> str:
     return (t[:48].rstrip() + "…") if len(t) > 48 else t
 
 
-def _build_prompt(project: dict | None, history: list[dict], message: str) -> str:
+def _build_prompt(
+    project: dict | None, history: list[dict], message: str, files: list[str] | None = None
+) -> str:
     """Compose the agent prompt with project brief + recent history (continuity)."""
     parts: list[str] = []
     if project and project.get("brief"):
         parts.append("PROJECT BRIEF (the paper you are helping with):\n" + project["brief"])
+    if files:
+        parts.append(
+            "FILES UPLOADED TO THIS PROJECT (the Analyst can read these via analyze()):\n"
+            + ", ".join(files)
+        )
     if history:
         convo = "\n".join(f"{m['role']}: {m['content'][:600]}" for m in history)
         parts.append("CONVERSATION SO FAR:\n" + convo)
@@ -320,7 +327,9 @@ async def chat_stream(req: ChatRequest, x_api_key: str | None = Header(default=N
             store.rename_conversation(conv["id"], derived)
             title = derived
     store.add_message(conv["id"], "user", req.message)
-    prompt = _build_prompt(project, history, req.message)
+    ws = workspace_for(project["id"])
+    ws_files = sorted(p.name for p in ws.iterdir() if p.is_file()) if ws.exists() else []
+    prompt = _build_prompt(project, history, req.message, ws_files)
     agent = build_supervisor()
     cid, pid = conv["id"], project["id"]
 
