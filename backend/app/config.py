@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     auth_password: str | None = None
     session_ttl_hours: int = 168  # 7 days
 
+    # --- Code sandbox (Docker). Tune memory down on small instances. ---
+    sandbox_image: str = "mentis-sandbox:latest"
+    sandbox_memory: str = "2g"
+    sandbox_cpus: str = "2"
+    sandbox_timeout: int = 60
+
     # --- App ---
     api_key: str | None = None
     conversation_store: str = "local"        # "local" | "dynamo"

@@ -20,8 +20,6 @@ from pathlib import Path
 
 from .config import get_settings
 
-IMAGE = "mentis-sandbox:latest"
-
 
 # --- Workspace context -----------------------------------------------------
 # Each project gets its own workspace directory (the local stand-in for an S3
@@ -101,9 +99,9 @@ def run_python(
     code: str,
     workspace: Path,
     *,
-    timeout: int = 60,
-    memory: str = "2g",
-    cpus: str = "2",
+    timeout: int | None = None,
+    memory: str | None = None,
+    cpus: str | None = None,
 ) -> SandboxResult:
     """Execute ``code`` in the sandbox image with ``workspace`` mounted at /workspace.
 
@@ -112,6 +110,11 @@ def run_python(
     limits, and runs as a non-root user. Relative file paths in the code resolve
     inside /workspace, so anything written there is returned in ``files``.
     """
+    s = get_settings()
+    timeout = timeout or s.sandbox_timeout
+    memory = memory or s.sandbox_memory
+    cpus = cpus or s.sandbox_cpus
+
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
     before = _snapshot(workspace)
@@ -128,7 +131,7 @@ def run_python(
         "--security-opt", "no-new-privileges",
         "-w", "/workspace",
         "-v", f"{workspace.resolve()}:/workspace",
-        IMAGE, "python", "-",
+        s.sandbox_image, "python", "-",
     ]
 
     timed_out = False
