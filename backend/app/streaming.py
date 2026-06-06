@@ -39,6 +39,9 @@ def _artifact_markdown(base: str) -> str:
 
 _THINK_BLOCK = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
 _OPEN = "<thinking>"
+# Some models wrap their answer in stray <response>...</response> tags; strip the
+# tags (keep the content) so they don't render in the transcript.
+_STRAY = re.compile(r"</?response\s*>", re.IGNORECASE)
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -49,6 +52,7 @@ def _clean_stream(raw: str) -> str:
     """Strip complete <thinking> blocks; hold back text from an unclosed block or a
     partially-formed opening tag (so we never emit half a tag we'd want to retract)."""
     s = _THINK_BLOCK.sub("", raw)
+    s = _STRAY.sub("", s)
     i = s.lower().find(_OPEN)
     if i != -1:
         return s[:i]
@@ -60,6 +64,7 @@ def _clean_stream(raw: str) -> str:
 
 def _finalize(raw: str) -> str:
     s = _THINK_BLOCK.sub("", raw)
+    s = _STRAY.sub("", s)
     i = s.lower().find(_OPEN)
     if i != -1:
         s = s[:i]

@@ -45,6 +45,12 @@ data "aws_subnets" "default" {
   }
 }
 
+# AZ of the chosen subnet — used to place the data volume in the same AZ as the
+# instance, while keeping the volume independent of the instance's lifecycle.
+data "aws_subnet" "selected" {
+  id = data.aws_subnets.default.ids[0]
+}
+
 # Default KMS key used by SSM SecureString (needed for the instance to decrypt secrets).
 data "aws_kms_alias" "ssm" {
   name = "alias/aws/ssm"
@@ -228,4 +234,29 @@ resource "aws_instance" "mentis" {
 resource "aws_eip_association" "mentis" {
   instance_id   = aws_instance.mentis.id
   allocation_id = aws_eip.mentis.id
+}
+
+# --- Persistent data volume ------------------------------------------------
+# Independent of the instance (AZ comes from the subnet, not the instance), so
+# replacing the instance does NOT destroy it. The SQLite DB and project file
+# workspaces live here and survive every redeploy.
+resource "aws_ebs_volume" "data" {
+  availability_zone = data.aws_subnet.selected.availability_zone
+  size              = var.data_volume_size_gb
+  type              = "gp3"
+  encrypted         = true
+  tags              = { Name = "${local.name}-data" }
+
+  # Guard against accidental data loss on `terraform destroy`. To intentionally
+  # remove it, delete this block first.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "data" {
+  device_name  = "/dev/sdf"
+  volume_id    = aws_ebs_volume.data.id
+  instance_id  = aws_instance.mentis.id
+  force_detach = true # allow detach when the instance is replaced
 }

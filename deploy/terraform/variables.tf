@@ -11,9 +11,15 @@ variable "instance_type" {
 }
 
 variable "volume_size_gb" {
-  description = "Root EBS (gp3) size in GB. Holds the OS, app, SQLite DB, and project file workspaces."
+  description = "Root EBS (gp3) size in GB. Holds the OS and app code (rebuilt each boot)."
   type        = number
   default     = 30
+}
+
+variable "data_volume_size_gb" {
+  description = "Persistent data EBS (gp3) size in GB. Holds the SQLite DB and project file workspaces; SURVIVES instance replacement."
+  type        = number
+  default     = 10
 }
 
 variable "domain" {

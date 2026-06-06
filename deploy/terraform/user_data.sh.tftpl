@@ -36,7 +36,7 @@ dnf update -y
 # cairo-devel + python3.11-devel: pycairo (xhtml2pdf -> svglib -> rlpycairo ->
 # pycairo) has no arm64 wheel and compiles from source, needing the cairo C
 # library AND the Python dev headers.
-dnf install -y git docker nodejs npm python3.11 python3.11-pip python3.11-devel gcc cairo-devel unzip tar
+dnf install -y git docker nodejs npm python3.11 python3.11-pip python3.11-devel gcc cairo-devel e2fsprogs unzip tar
 
 # AWS CLI v2 (arm64).
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
@@ -45,6 +45,23 @@ unzip -q /tmp/awscliv2.zip -d /tmp
 export PATH=/usr/local/bin:$PATH
 
 systemctl enable --now docker
+
+# Mount the persistent data volume at /data (survives instance replacement).
+# On a Nitro instance the extra EBS shows up as the non-root nvme disk. Format
+# only if it has no filesystem yet (first ever boot), so existing data is kept.
+DATA_DEV=""
+for i in $(seq 1 30); do
+  DATA_DEV=$(lsblk -dpno NAME | grep -v nvme0n1 | head -1)
+  [ -n "$DATA_DEV" ] && [ -b "$DATA_DEV" ] && break
+  sleep 2
+done
+if [ -n "$DATA_DEV" ]; then
+  blkid "$DATA_DEV" >/dev/null 2>&1 || mkfs.ext4 -L mentis-data "$DATA_DEV"
+  mkdir -p /data
+  grep -q " /data " /etc/fstab || echo "$DATA_DEV /data ext4 defaults,nofail 0 2" >> /etc/fstab
+  mount /data 2>/dev/null || mount "$DATA_DEV" /data
+  mkdir -p /data/workspaces
+fi
 
 # Secrets from SSM (decrypted via the instance role).
 get_secret() {
@@ -86,6 +103,7 @@ ALLOWED_ORIGINS=https://$DOMAIN
 CONTACT_EMAIL=$CONTACT_EMAIL
 SCOPUS_API_KEY=$SCOPUS_API_KEY
 SCOPUS_INSTTOKEN=$SCOPUS_INSTTOKEN
+STORE_PATH=/data/mentis.db
 ENV
 chmod 600 backend/.env
 
