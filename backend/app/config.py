@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     max_tool_steps: int = 8
     run_timeout: int = 240                     # hard wall-clock ceiling per agent run (s); a stalled
                                                # Bedrock stream becomes a clean error, never a freeze
+    max_agent_steps: int = 16                  # hard cap on model calls per agent run (orchestrator AND
+                                               # each sub-agent); stops a runaway tool-call loop from
+                                               # re-feeding context and billing millions of input tokens
 
 
 @lru_cache

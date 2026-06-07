@@ -13,10 +13,44 @@ from __future__ import annotations
 import logging
 
 from strands import Agent, tool
+from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 
 from . import models, prompts, sandbox, sources, tools
+from .config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class StepLimiter(HookProvider):
+    """Abort a single agent run after `max_steps` model calls.
+
+    Strands' event loop recurses for as long as the model keeps requesting tools —
+    there is no native cap. A wedged or looping agent (e.g. retrying a failing tool)
+    therefore re-feeds an ever-growing context to the model on every cycle, which
+    bills huge INPUT-token counts for almost no output. One BeforeModelCallEvent
+    fires per cycle, so counting them and raising past the cap is a hard stop on
+    that runaway. Each Agent gets its own fresh limiter (agents are built per call).
+    """
+
+    def __init__(self, max_steps: int, label: str) -> None:
+        self.max_steps = max_steps
+        self.label = label
+        self.count = 0
+
+    def register_hooks(self, registry: HookRegistry, **_: object) -> None:
+        registry.add_callback(BeforeModelCallEvent, self._on_model_call)
+
+    def _on_model_call(self, _event: BeforeModelCallEvent) -> None:
+        self.count += 1
+        if self.count > self.max_steps:
+            raise RuntimeError(
+                f"step limit reached ({self.label}: {self.max_steps} model calls) — "
+                "stopping to prevent a runaway loop"
+            )
+
+
+def _limiter(label: str) -> StepLimiter:
+    return StepLimiter(get_settings().max_agent_steps, label)
 
 # Claude (model_draft / model_verify) is unavailable until the Anthropic use-case
 # form is accepted for the account — every call raises ResourceNotFoundException
@@ -67,6 +101,7 @@ def research(topic: str) -> str:
         system_prompt=prompts.RESEARCHER_PROMPT + f"\n\nEnabled sources this run: {', '.join(active)}.",
         callback_handler=None,
         tools=tool_list,
+        hooks=[_limiter("researcher")],
     )
     return str(researcher(f"Topic: {topic}"))
 
@@ -85,6 +120,7 @@ def draft_section(request: str, sources: str) -> str:
                 model=make_model(),
                 system_prompt=prompts.WHITEPAPER_PROMPT,
                 callback_handler=None,
+                hooks=[_limiter("writer")],
             )
             return str(writer(message))
         except Exception as e:  # noqa: BLE001
@@ -119,6 +155,7 @@ def analyze(task: str) -> str:
                 system_prompt=prompts.ANALYST_PROMPT,
                 callback_handler=None,
                 tools=[tools.run_python],
+                hooks=[_limiter("analyst")],
             )
             return str(analyst(full_task))
         except Exception as e:  # noqa: BLE001
@@ -135,4 +172,5 @@ def build_supervisor() -> Agent:
         system_prompt=prompts.SUPERVISOR_PROMPT,
         callback_handler=None,
         tools=[research, analyze, draft_section, tools.fetch_pdf_text, tools.verify_doi],
+        hooks=[_limiter("orchestrator")],
     )
