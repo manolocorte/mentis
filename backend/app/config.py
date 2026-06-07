@@ -52,9 +52,12 @@ class Settings(BaseSettings):
     max_tool_steps: int = 8
     run_timeout: int = 240                     # hard wall-clock ceiling per agent run (s); a stalled
                                                # Bedrock stream becomes a clean error, never a freeze
-    max_agent_steps: int = 5                   # hard cap on model calls per agent run (orchestrator AND
-                                               # each sub-agent); stops a runaway tool-call loop from
-                                               # re-feeding context and billing millions of input tokens
+    max_agent_steps: int = 5                   # hard cap on model calls per run for the orchestrator,
+                                               # researcher and writer; stops a runaway tool-call loop
+                                               # from re-feeding context and billing millions of tokens
+    max_analyst_steps: int = 8                 # the Analyst gets more headroom: real data analysis
+                                               # legitimately iterates (load → inspect → compute → plot,
+                                               # plus the odd bug-fix), each run_python a separate step
     max_model_retries: int = 1                 # retries per model call after the first attempt (1 = one
                                                # retry, then give up). Keeps a transient blip recoverable
                                                # without the default 6-attempt backoff storm.

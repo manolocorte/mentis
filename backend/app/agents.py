@@ -50,8 +50,9 @@ class StepLimiter(HookProvider):
             )
 
 
-def _limiter(label: str) -> StepLimiter:
-    return StepLimiter(get_settings().max_agent_steps, label)
+def _limiter(label: str, steps: int | None = None) -> StepLimiter:
+    s = get_settings()
+    return StepLimiter(steps if steps is not None else s.max_agent_steps, label)
 
 
 def _retry() -> ModelRetryStrategy:
@@ -163,7 +164,7 @@ def analyze(task: str) -> str:
                 system_prompt=prompts.ANALYST_PROMPT,
                 callback_handler=None,
                 tools=[tools.run_python],
-                hooks=[_limiter("analyst")],
+                hooks=[_limiter("analyst", get_settings().max_analyst_steps)],
                 retry_strategy=_retry(),
             )
             return str(analyst(full_task))
