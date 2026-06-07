@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 
 from strands import Agent, tool
+from strands.event_loop._retry import ModelRetryStrategy
 from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 
 from . import models, prompts, sandbox, sources, tools
@@ -51,6 +52,11 @@ class StepLimiter(HookProvider):
 
 def _limiter(label: str) -> StepLimiter:
     return StepLimiter(get_settings().max_agent_steps, label)
+
+
+def _retry() -> ModelRetryStrategy:
+    # max_attempts = first attempt + N retries; stateful, so build a fresh one per agent.
+    return ModelRetryStrategy(max_attempts=get_settings().max_model_retries + 1)
 
 # Claude (model_draft / model_verify) is unavailable until the Anthropic use-case
 # form is accepted for the account — every call raises ResourceNotFoundException
@@ -102,6 +108,7 @@ def research(topic: str) -> str:
         callback_handler=None,
         tools=tool_list,
         hooks=[_limiter("researcher")],
+        retry_strategy=_retry(),
     )
     return str(researcher(f"Topic: {topic}"))
 
@@ -121,6 +128,7 @@ def draft_section(request: str, sources: str) -> str:
                 system_prompt=prompts.WHITEPAPER_PROMPT,
                 callback_handler=None,
                 hooks=[_limiter("writer")],
+                retry_strategy=_retry(),
             )
             return str(writer(message))
         except Exception as e:  # noqa: BLE001
@@ -156,6 +164,7 @@ def analyze(task: str) -> str:
                 callback_handler=None,
                 tools=[tools.run_python],
                 hooks=[_limiter("analyst")],
+                retry_strategy=_retry(),
             )
             return str(analyst(full_task))
         except Exception as e:  # noqa: BLE001
@@ -173,4 +182,5 @@ def build_supervisor() -> Agent:
         callback_handler=None,
         tools=[research, analyze, draft_section, tools.fetch_pdf_text, tools.verify_doi],
         hooks=[_limiter("orchestrator")],
+        retry_strategy=_retry(),
     )

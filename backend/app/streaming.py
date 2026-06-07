@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -23,6 +24,15 @@ from .citations import finalize_with_references
 from .config import get_settings
 from .sandbox import produced_artifacts, reset_artifacts
 from .sources import reset_run
+
+logger = logging.getLogger(__name__)
+
+# Shown to the user when a run can't finish (timeout, step-cap abort, or error).
+# The real cause is logged server-side; the user gets a calm, actionable message.
+TOO_COMPLEX = (
+    "I wasn't able to complete this request — it may be too complex or broad for me to handle "
+    "in one go. Please try reformulating it, or breaking it into smaller, more specific questions."
+)
 
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 
@@ -109,23 +119,27 @@ async def run_agent_sse(
                             yield _sse("tool_call", {"name": tu["name"], "input": tu.get("input", {})})
         except (TimeoutError, asyncio.TimeoutError):
             timed_out = True
-            yield _sse("status", {"label": "Run timed out — returning partial output"})
         yield _sse("status", {"label": "Checking sources & claims"})
         final_text = _finalize(raw)
-        if timed_out:
-            final_text = (
-                (final_text + "\n\n_(Stopped early: the run hit the time limit; this answer may be incomplete.)_")
-                if final_text
-                else "The run took too long and was stopped before producing an answer. Try a smaller or more specific request."
-            )
-        final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
-        if artifact_base:
-            final_text += _artifact_markdown(artifact_base)
+        citations: list[dict] = []
+        if timed_out or not final_text.strip():
+            # Hit the wall-clock ceiling or produced nothing usable → bail gracefully.
+            final_text = TOO_COMPLEX
+        else:
+            final_text, citations = await asyncio.to_thread(finalize_with_references, final_text)
+            if artifact_base:
+                final_text += _artifact_markdown(artifact_base)
         if citations:
             yield _sse("citations", {"items": citations})
         if sink is not None:
             sink["text"] = final_text
             sink["citations"] = citations
         yield _sse("run_finished", {"text": final_text})
-    except Exception as e:  # noqa: BLE001
-        yield _sse("error", {"message": str(e)})
+    except Exception:  # noqa: BLE001
+        # Step-cap abort, model error after the single retry, etc. Log the real cause,
+        # show the user a calm message rather than a raw stack/error event.
+        logger.exception("agent run failed")
+        if sink is not None:
+            sink["text"] = TOO_COMPLEX
+            sink["citations"] = []
+        yield _sse("run_finished", {"text": TOO_COMPLEX})
